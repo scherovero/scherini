@@ -25,6 +25,7 @@ import Pomc.SatUtil
 import Pomc.SCCAlgorithm
 import Pomc.SetMap
 import qualified Pomc.SetMap as SM
+import Pomc.Trace as TR
 
 import Control.Monad (foldM, forM_)
 import Control.Monad.ST (ST)
@@ -46,6 +47,7 @@ data Globals s state = FGlobals
   , visited :: STRef s (SetMap s (Stack state))
   , suppStarts :: STRef s (SetMap s (Stack state))
   , suppEnds :: STRef s (SetMap s (StateId state))
+  , traceSumm :: STRef s (TraceMap s state)
   } | WGlobals
   { sIdGen :: SIdGen s state
   , suppStarts :: STRef s (SetMap s (Stack state))
@@ -62,7 +64,7 @@ data Delta state = Delta
   , deltaPop :: state -> state -> [state] -- deltapop relation
   }
 
--- Begin debugging stuff
+{--- Begin debugging stuff
 data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Show)
 type TraceId state = [(TraceType, StateId state, Stack state)]
 type Trace state = [(TraceType, state, Maybe (Input, state))]
@@ -101,7 +103,7 @@ showTrace be pconv trace = concatMap showMove trace
           show r ++ "\n" ++
           showState be pconv (getSatState r)
         showStack Nothing = "Bottom"
--- End debugging stuff
+-- End debugging stuff-}
 
 reach :: (NFData state, SatState state, Eq state, Hashable state, Show state)
       => (StateId state -> Bool) -- is the state as desired?
@@ -144,7 +146,7 @@ reachPush :: (NFData state, SatState state, Eq state, Hashable state, Show state
           -> StateId state
           -> Stack state
           -> state
-          -> TraceId  state
+          -> TraceId state
           -> ST s (Bool, TraceId state)
 reachPush isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
@@ -228,10 +230,12 @@ isEmpty delta initials isFinal =
         emptyVisited <- SM.empty
         emptySuppStarts <- SM.empty
         emptySuppEnds <- SM.empty
+        emptyTraceSumm <- TR.empty
         let globals = FGlobals { sIdGen = newSig
                               , visited = emptyVisited
                               , suppStarts = emptySuppStarts
                               , suppEnds = emptySuppEnds
+                              , traceSumm = emptyTraceSumm
                               }
         initialsId <- wrapStates newSig initials
         foldM (\acc q -> if fst acc
