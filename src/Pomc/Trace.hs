@@ -81,8 +81,8 @@ showTrace be pconv trace = concatMap showMove trace
 -- Map to TraceId chains
 type TraceMap s state = MV.MVector s (TraceId state)
 
--- insert a trace chunk into the TraceMap
-insert :: (Ord state) => STRef s (TraceMap s state) -> Int -> (TraceType, StateId state, Stack state) -> ST.ST s ()
+-- append a trace chunk at the corresponding index into TraceMap
+insert :: STRef s (TraceMap s state) -> Int -> (TraceType, StateId state, Stack state) -> ST.ST s ()
 insert tmref idx trchunk = do
   tm <- readSTRef tmref
   let len = MV.length tm

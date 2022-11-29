@@ -151,9 +151,12 @@ reachPush :: (NFData state, SatState state, Eq state, Hashable state, Show state
 reachPush isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
       doPush res@(True, _) _ = return res
-      doPush (False, _) p = do
-        SM.insert (suppStarts globals) (getId q) g
-        reach isDestState isDestStack globals delta p (Just (qProps, q)) ((Push, q, g) : trace)
+      doPush (False, _) p = 
+         let trcChunk = (Push, q, g) 
+         in do
+           SM.insert (suppStarts globals) (getId q) g
+           TR.insert (traceSumm globals) (getId q) trcChunk
+           reach isDestState isDestStack globals delta p (Just (qProps, q)) (trcChunk : trace)
   in do
     newStates <- wrapStates (sIdGen globals) $ (deltaPush delta) qState qProps
     res@(pushReached, _) <- V.foldM' doPush (False, []) newStates
@@ -163,7 +166,10 @@ reachPush isDestState isDestStack globals delta q g qState trace =
       currentSuppEnds <- SM.lookup (suppEnds globals) (getId q)
       foldM (\acc s -> if fst acc
                        then return acc
-                       else reach isDestState isDestStack globals delta s g ((Summary, q, g) : trace))
+                       else let trcChunk = (Summary, q, g)
+                            in do
+                              TR.insert (traceSumm globals) (getId q) trcChunk
+                              reach isDestState isDestStack globals delta s g (trcChunk : trace))
         (False, [])
         currentSuppEnds
 
