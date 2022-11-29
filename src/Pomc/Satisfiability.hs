@@ -150,13 +150,13 @@ reachPush :: (NFData state, SatState state, Eq state, Hashable state, Show state
           -> ST s (Bool, TraceId state)
 reachPush isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
+      trcChunk = (Push, q, g)
       doPush res@(True, _) _ = return res
-      doPush (False, _) p = 
-         let trcChunk = (Push, q, g) 
-         in do
-           SM.insert (suppStarts globals) (getId q) g
-           TR.insert (traceSumm globals) (getId q) trcChunk
-           reach isDestState isDestStack globals delta p (Just (qProps, q)) (trcChunk : trace)
+      doPush (False, _) p = do
+        SM.insert (suppStarts globals) (getId q) g
+        TR.insert (traceSumm globals) (getId q) trcChunk
+        --TR.insertSummary (traceSumm globals) (getId (snd . fromJust $ g)) (Summary, q, g)  ###### ALL'INIZIO E' NOTHING PORCoDIAVOLO
+        reach isDestState isDestStack globals delta p (Just (qProps, q)) (trcChunk : trace)
   in do
     newStates <- wrapStates (sIdGen globals) $ (deltaPush delta) qState qProps
     res@(pushReached, _) <- V.foldM' doPush (False, []) newStates
@@ -166,10 +166,7 @@ reachPush isDestState isDestStack globals delta q g qState trace =
       currentSuppEnds <- SM.lookup (suppEnds globals) (getId q)
       foldM (\acc s -> if fst acc
                        then return acc
-                       else let trcChunk = (Summary, q, g)
-                            in do
-                              TR.insert (traceSumm globals) (getId q) trcChunk
-                              reach isDestState isDestStack globals delta s g (trcChunk : trace))
+                       else reach isDestState isDestStack globals delta s g ((Summary, q, g) : trace))
         (False, [])
         currentSuppEnds
 
@@ -186,9 +183,11 @@ reachShift :: (NFData state, SatState state, Eq state, Hashable state, Show stat
            -> ST s (Bool, TraceId state)
 reachShift isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
+      trcChunk = (Shift, q, g)
       doShift res@(True, _) _ = return res
-      doShift (False, _) p =
-        reach isDestState isDestStack globals delta p (Just (qProps, (snd . fromJust $ g))) ((Shift, q, g) : trace)
+      doShift (False, _) p = do
+          TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) trcChunk
+          reach isDestState isDestStack globals delta p (Just (qProps, (snd . fromJust $ g))) (trcChunk : trace)
   in do
     newStates <- wrapStates (sIdGen globals) $ (deltaShift delta) qState qProps
     V.foldM' doShift (False, []) newStates
@@ -208,11 +207,14 @@ reachPop isDestState isDestStack globals delta q g qState trace =
   let doPop res@(True, _) _ = return res
       doPop (False, _) p =
         let r = snd . fromJust $ g
+            trcChunk = (Pop, q, g)
             closeSupports res@(True, _) _ = return res
             closeSupports (False, _) g'
               | isNothing g' ||
                 ((prec delta) (fst . fromJust $ g') (current . getSatState . getState $ r)) == Just Yield
-              = reach isDestState isDestStack globals delta p g' ((Pop, q, g) : trace)
+              = do
+                  TR.insert (traceSumm globals) (getId r) trcChunk
+                  reach isDestState isDestStack globals delta p g' (trcChunk : trace)
               | otherwise = return (False, [])
         in do
           SM.insert (suppEnds globals) (getId r) p

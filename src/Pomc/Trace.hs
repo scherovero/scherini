@@ -13,6 +13,7 @@ module Pomc.Trace ( TraceType(..)
 		  , toInputTrace
 		  , showTrace
                   , insert
+                  , insertSummary
                   , lookup
                   , modifyAll
                   , empty
@@ -98,6 +99,20 @@ insert tmref idx trchunk = do
                ; MV.unsafeModify grown ((:) trchunk) idx
                ; writeSTRef tmref grown
                }
+
+-- insert a Summary trace chunk before a push
+insertSummary :: STRef s (TraceMap s state) -> Int -> (TraceType, StateId state, Stack state) -> ST.ST s ()               
+insertSummary tmref idx trchunk = do
+  tm <- readSTRef tmref
+  let len = MV.length tm
+  if idx < len
+    then do
+      tl <- MV.unsafeRead tm idx
+      if null tl
+         then return ()
+         else insert tmref idx trchunk
+    else return ()
+               
 -- extract trace from TraceMap
 lookup :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceId state)
 lookup tmref idx = do
