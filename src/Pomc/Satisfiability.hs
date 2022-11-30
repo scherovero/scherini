@@ -154,8 +154,8 @@ reachPush isDestState isDestStack globals delta q g qState trace =
       doPush res@(True, _) _ = return res
       doPush (False, _) p = do
         SM.insert (suppStarts globals) (getId q) g
+        TR.insertSummary (traceSumm globals) q g
         TR.insert (traceSumm globals) (getId q) trcChunk
-        --TR.insertSummary (traceSumm globals) (getId (snd . fromJust $ g)) (Summary, q, g)  ###### ALL'INIZIO E' NOTHING PORCoDIAVOLO
         reach isDestState isDestStack globals delta p (Just (qProps, q)) (trcChunk : trace)
   in do
     newStates <- wrapStates (sIdGen globals) $ (deltaPush delta) qState qProps

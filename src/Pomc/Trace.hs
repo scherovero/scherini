@@ -32,6 +32,7 @@ import Pomc.SCCAlgorithm
 
 import Prelude hiding (lookup)
 import qualified Control.Monad.ST as ST
+import Data.Maybe
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Mutable as MV
 import Data.Set (Set)
@@ -100,18 +101,18 @@ insert tmref idx trchunk = do
                ; writeSTRef tmref grown
                }
 
--- insert a Summary trace chunk before a push
-insertSummary :: STRef s (TraceMap s state) -> Int -> (TraceType, StateId state, Stack state) -> ST.ST s ()               
-insertSummary tmref idx trchunk = do
-  tm <- readSTRef tmref
-  let len = MV.length tm
-  if idx < len
-    then do
-      tl <- MV.unsafeRead tm idx
-      if null tl
-         then return ()
-         else insert tmref idx trchunk
-    else return ()
+-- insert a Summary trace chunk before a push in the previous chain
+insertSummary :: STRef s (TraceMap s state) -> StateId state -> Stack state -> ST.ST s ()
+insertSummary tmref q g = do
+  if isNothing g
+    then return ()
+    else
+      let idx = getId (snd . fromJust $ g)
+      in do
+        trace <- lookup tmref idx
+        if not (null trace) 			--potrebbe essere un controllo inutile perchè se g è nello stack almeno una push l'ha subito e quindi di sicuro è partita la catena
+          then insert tmref idx (Summary, q, g)
+          else return () 
                
 -- extract trace from TraceMap
 lookup :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceId state)
@@ -133,3 +134,13 @@ empty :: ST.ST s (STRef s (TraceMap s state))
 empty = do
   tm <- MV.replicate 4 []
   newSTRef tm
+  
+--
+unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> TraceId state
+unrollTrace tmref trace = foldr foldTrace [] trace
+  where foldTrace (moveType, q, g) rest
+  	| moveType == Summary = 
+  	  let traceSum = ST.runST $ do
+  	    ts <- lookup tmref (getId q)
+  	  in (unrollTrace tmref traceSum) ++ rest
+  	| otherwise = (moveType, q, g) : rest
