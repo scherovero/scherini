@@ -252,7 +252,8 @@ isEmpty delta initials isFinal =
                          else reach (isFinal . getState) isNothing globals delta q Nothing [])
           (False, [])
           initialsId
-  in (not accepting, unIdTrace $ reverse trace)
+      unrTrace = ST.runST $ do unrollTrace traceSumm trace
+  in (not accepting, unIdTrace unrTrace)
 
 -- The omega case does not print counterexamples at the moment
 ------------------------------------------------------------------------------------------
