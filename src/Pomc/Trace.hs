@@ -28,15 +28,16 @@ import Pomc.PropConv (APType, PropConv(..), convProps)
 import Pomc.State(Input, State(..), showState, showAtom)
 import Pomc.Encoding (PropSet, BitEncoding, extractInput, decodeInput)
 import Pomc.SatUtil
-import Pomc.SCCAlgorithm
+--import Pomc.SCCAlgorithm
 --import Pomc.SetMap
 
 import Prelude hiding (lookup)
+import Control.Monad (foldM)
 import qualified Control.Monad.ST as ST
 import Data.Maybe
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Mutable as MV
-import Data.Set (Set)
+--import Data.Set (Set)
 import qualified Data.Set as Set
 
 -- Trace data type
@@ -135,29 +136,15 @@ empty :: ST.ST s (STRef s (TraceMap s state))
 empty = do
   tm <- MV.replicate 4 []
   newSTRef tm
-  
 
-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> TraceId state
-unrollTrace tmref trace = foldr foldTrace [] trace
-  where foldTrace (moveType, q, g) rest
-          | moveType == Summary = 
-            let traceSum = ST.runST (lookup tmref (getId q))
-            in traceSum ++ rest
-          | otherwise = (moveType, q, g) : rest
-          
-{-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
-unrollTrace tmref trace = do
-  tr <- lookup tmref 0
-  return tr-}
-          
-{-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
-unrollTrace tmref trace = do
-  foldr foldTrace [] trace
-     where foldTrace acc (moveType, q, g)
-       | moveType == Summary = 
-          let traceSum = do
-              tm <- lookup tmref (getId q)
-              return tm
-          in (unrollTrace tmref traceSum) ++ acc
-       | otherwise = (moveType, q, g) : acc
--}          
+-- complete the trace given substituting recursively the summaries with the saved trace chunks
+unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
+unrollTrace tmref trace = 
+  let foldTrace acc (Summary, q, _) = do
+        ts <- lookup tmref (getId q)
+        tc <- unrollTrace tmref ts
+        return (acc ++ tc)
+      foldTrace acc (moveType, q, g) = do
+        return ((moveType, q, g) : acc) 
+  in do
+    foldM foldTrace [] trace                   
