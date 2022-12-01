@@ -141,6 +141,7 @@ reach isDestState isDestStack globals delta q g trace = do
 reachPush :: (NFData state, SatState state, Eq state, Hashable state, Show state)
           => (StateId state -> Bool)
           -> (Stack state -> Bool)
+          
           -> Globals s state
           -> Delta state
           -> StateId state
@@ -252,7 +253,6 @@ isEmpty delta initials isFinal =
           (False, [])
           initialsId
   in (not accepting, unIdTrace $ reverse trace)
-
 
 -- The omega case does not print counterexamples at the moment
 ------------------------------------------------------------------------------------------

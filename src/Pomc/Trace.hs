@@ -6,17 +6,18 @@
 -}
 
 module Pomc.Trace ( TraceType(..)
-		  , TraceId
-		  , Trace
-		  , TraceMap
-		  , unIdTrace
-		  , toInputTrace
-		  , showTrace
+                  , TraceId
+                  , Trace
+                  , TraceMap
+                  , unIdTrace
+                  , toInputTrace
+                  , showTrace
                   , insert
                   , insertSummary
                   , lookup
                   , modifyAll
                   , empty
+                  , unrollTrace
                   ) where
 
 import Pomc.Prop (Prop(..))
@@ -90,17 +91,17 @@ insert tmref idx trchunk = do
   let len = MV.length tm
   if idx < len
     then do
-    	tl <- MV.unsafeRead tm idx
-    	MV.unsafeWrite tm idx (trchunk : tl)
-    else let newLen = computeLen len idx
-             computeLen size newIdx | newIdx < size = size
-                                    | otherwise = computeLen (size*2) newIdx
-         in do { grown <- MV.grow tm (newLen-len)
-               ; mapM_ (\i -> MV.unsafeWrite grown i []) [len..(newLen-1)]
-               ; MV.unsafeModify grown ((:) trchunk) idx
-               ; writeSTRef tmref grown
-               }
-
+      tl <- MV.unsafeRead tm idx
+      MV.unsafeWrite tm idx (trchunk : tl)
+      else let newLen = computeLen len idx
+               computeLen size newIdx | newIdx < size = size
+                                      | otherwise = computeLen (size*2) newIdx
+           in do { grown <- MV.grow tm (newLen-len)
+                 ; mapM_ (\i -> MV.unsafeWrite grown i []) [len..(newLen-1)]
+                 ; MV.unsafeModify grown ((:) trchunk) idx
+                 ; writeSTRef tmref grown
+                 }
+                 
 -- insert a Summary trace chunk before a push in the previous chain
 insertSummary :: STRef s (TraceMap s state) -> StateId state -> Stack state -> ST.ST s ()
 insertSummary tmref q g = do
@@ -110,7 +111,7 @@ insertSummary tmref q g = do
       let idx = getId (snd . fromJust $ g)
       in do
         trace <- lookup tmref idx
-        if not (null trace) 			--potrebbe essere un controllo inutile perchè se g è nello stack almeno una push l'ha subito e quindi di sicuro è partita la catena
+        if not (null trace)                     --potrebbe essere un controllo inutile perchè se g è nello stack almeno una push l'ha subito e quindi di sicuro è partita la catena
           then insert tmref idx (Summary, q, g)
           else return () 
                
@@ -123,8 +124,8 @@ lookup tmref idx = do
     else return []
 
 modifyAll :: (Ord state) => STRef s (TraceMap s state) 
-			 -> ((TraceType, StateId state, Stack state) -> (TraceType, StateId state, Stack state))
-			 -> ST.ST s ()
+                         -> ((TraceType, StateId state, Stack state) -> (TraceType, StateId state, Stack state)) 
+                         -> ST.ST s ()
 modifyAll tmref f = do
   tm <- readSTRef tmref
   mapM_ (MV.unsafeModify tm $ map f) [0..((MV.length tm) -1)]
@@ -135,12 +136,28 @@ empty = do
   tm <- MV.replicate 4 []
   newSTRef tm
   
---
+
 unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> TraceId state
 unrollTrace tmref trace = foldr foldTrace [] trace
   where foldTrace (moveType, q, g) rest
-  	| moveType == Summary = 
-  	  let traceSum = ST.runST $ do
-  	    ts <- lookup tmref (getId q)
-  	  in (unrollTrace tmref traceSum) ++ rest
-  	| otherwise = (moveType, q, g) : rest
+          | moveType == Summary = 
+            let traceSum = ST.runST (lookup tmref (getId q))
+            in traceSum ++ rest
+          | otherwise = (moveType, q, g) : rest
+          
+{-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
+unrollTrace tmref trace = do
+  tr <- lookup tmref 0
+  return tr-}
+          
+{-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
+unrollTrace tmref trace = do
+  foldr foldTrace [] trace
+     where foldTrace acc (moveType, q, g)
+       | moveType == Summary = 
+          let traceSum = do
+              tm <- lookup tmref (getId q)
+              return tm
+          in (unrollTrace tmref traceSum) ++ acc
+       | otherwise = (moveType, q, g) : acc
+-}          
