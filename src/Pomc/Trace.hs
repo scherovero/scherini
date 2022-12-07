@@ -13,6 +13,9 @@ module Pomc.Trace ( TraceType(..)
                   , toInputTrace
                   , showTrace
                   , insert
+                  , insertDBG
+                  , emptyDBG
+                  , lookupDBG
                   , insertSummary
                   , lookup
                   , modifyAll
@@ -136,14 +139,41 @@ empty :: ST.ST s (STRef s (TraceMap s state))
 empty = do
   tm <- MV.replicate 4 []
   newSTRef tm
+  
+--DBG-----------------------------  
+emptyDBG :: ST.ST s (STRef s (TraceMap s state))
+emptyDBG = do
+  tm <- MV.replicate 30 []
+  newSTRef tm
+  
+insertDBG :: STRef s (TraceMap s state) -> Int -> (TraceType, StateId state, Stack state) -> ST.ST s ()
+insertDBG tmref idx trchunk = do
+  tm <- readSTRef tmref
+  tl <- MV.unsafeRead tm idx
+  MV.unsafeWrite tm idx (trchunk : tl)
+  
+lookupDBG :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceId state)
+lookupDBG tmref idx = do
+  tm <- readSTRef tmref
+  MV.unsafeRead tm idx
+
+exploreTraceMap :: STRef s (TraceMap s state) -> ST.ST s (TraceId state)
+exploreTraceMap tmref = do
+  tm <- readSTRef tmref
+  MV.foldM (\occ str -> return (occ ++ str)) [] tm
 
 -- complete the trace given substituting recursively the summaries with the saved trace chunks
 unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
 unrollTrace tmref trace = 
-  let foldTrace acc (Summary, q, _) = do
-        ts <- lookup tmref (getId q)
-        tc <- unrollTrace tmref ts
-        return (acc ++ tc)
+  let foldTrace acc sum@(Summary, q, _) = do
+        --ts <- lookup tmref (getId q)
+        --tc <- unrollTrace tmref ts
+        --return ((reverse tc) ++ acc)
+        --lst <- exploreTraceMap tmref
+        --return (((sum : lst) ++ [sum]) ++ acc)
+        tm <- readSTRef tmref
+        tl <- MV.unsafeRead tm 1 
+        return (((sum : tl) ++ [sum]) ++ acc)
       foldTrace acc (moveType, q, g) = do
         return ((moveType, q, g) : acc) 
   in do
