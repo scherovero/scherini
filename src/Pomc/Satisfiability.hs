@@ -151,22 +151,18 @@ reachPush :: (NFData state, SatState state, Eq state, Hashable state, Show state
           -> ST s (Bool, TraceId state)
 reachPush isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
-      trcChunk = (Push, q, g)
       doPush res@(True, _) _ = return res
       doPush (False, _) p = do
-        --TR.insert (traceSumm globals) (getId q) trcChunk
+        --TR.insert (traceSumm globals) (getId q) trcChunk             SALVO ANCHE p
         SM.insert (suppStarts globals) (getId q) g
-        reach isDestState isDestStack globals delta p (Just (qProps, q)) (trcChunk : trace)
+        reach isDestState isDestStack globals delta p (Just (qProps, q)) ((Push, q, g) : trace)
   in do
     --TR.insert (traceSumm globals) 60 (Push, q, g)
     newStates <- wrapStates (sIdGen globals) $ (deltaPush delta) qState qProps
     res@(pushReached, _) <- V.foldM' doPush (False, []) newStates
     --TR.insert (traceSumm globals) (getId q) (Push, q, g)
     if pushReached
-      then do
-        --TR.insert (traceSumm globals) (-1) trcChunk
-        TR.insert (traceSumm globals) (getId q) (Push, q, g)
-        return res
+      then return res
       else do
         currentSuppEnds <- SM.lookup (suppEnds globals) (getId q)
         foldM (\acc s -> if fst acc
@@ -174,7 +170,7 @@ reachPush isDestState isDestStack globals delta q g qState trace =
                             else reach isDestState isDestStack globals delta s g ((Summary, q, g) : trace))
           (False, [])
           currentSuppEnds
-        --TR.insert (traceSumm globals) (getId q) (Summary, q, g)
+        --TR.insert (traceSumm globals) (getId q) (Summary, q, g)       SALVO ANCHE s
         
 reachShift :: (NFData state, SatState state, Eq state, Hashable state, Show state)
            => (StateId state -> Bool)
@@ -191,7 +187,7 @@ reachShift isDestState isDestStack globals delta q g qState trace =
       trcChunk = (Shift, q, g)
       doShift res@(True, _) _ = return res
       doShift (False, _) p = do
-        --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) trcChunk
+        --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) trcChunk            SALVO ANCHE p
         reach isDestState isDestStack globals delta p (Just (qProps, (snd . fromJust $ g))) (trcChunk : trace)
   in do
     newStates <- wrapStates (sIdGen globals) $ (deltaShift delta) qState qProps
