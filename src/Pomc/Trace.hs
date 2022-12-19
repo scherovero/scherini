@@ -17,10 +17,10 @@ module Pomc.Trace ( TraceType(..)
                  -- , emptyDBG
                  -- , lookupDBG
                  -- , insertSummary
-                 -- , lookup
+                  , lookup
                  -- , modifyAll
                   , empty
-                 -- , unrollTrace
+                  , unrollTrace
                   ) where
 
 import Pomc.Prop (Prop(..))
@@ -93,74 +93,117 @@ type TraceMap s state = MV.MVector s (TraceChunk state, TraceChunk state, TraceC
 insert :: STRef s (TraceMap s state)
        -> Int
        -> (TraceType, StateId state, Stack state, StateId state)
-       -> TraceType
        -> ST.ST s ()
-insert tmref idx trctuple movetype = do
+insert tmref idx trctuple = do
   tm <- readSTRef tmref
   let len = MV.length tm
   if idx < len
     then do
       tl <- MV.unsafeRead tm idx
-      let newtuple = insertInTuple tl trctuple movetype
+      let newtuple = insertInTuple tl trctuple
       MV.unsafeWrite tm idx newtuple
     else let newLen = computeLen len idx
              computeLen size newIdx | newIdx < size = size
                                     | otherwise = computeLen (size*2) newIdx
            in do { grown <- MV.grow tm (newLen-len)
                  ; mapM_ (\i -> MV.unsafeWrite grown i ([],[],[])) [len..(newLen-1)]
-                 ; let { newtuple = insertInTuple ([],[],[]) trctuple movetype }
+                 ; let { newtuple = insertInTuple ([],[],[]) trctuple }
                  ; MV.unsafeWrite grown idx newtuple
                  ; writeSTRef tmref grown
                  }
                  
 insertInTuple :: (TraceChunk state, TraceChunk state, TraceChunk state) 
               -> (TraceType, StateId state, Stack state, StateId state)
-              -> TraceType
               -> (TraceChunk state, TraceChunk state, TraceChunk state)              
-insertInTuple (push, shift, pop) trctuple movetype
-                  | movetype == Push = (trctuple : push, shift, pop)
-                  | movetype == Shift || movetype == Summary = (push, trctuple : shift, pop)
-                  | otherwise = (push, shift, trctuple : pop)
-                  
+insertInTuple tpl@(push, shift, pop) trctuple@(movetype, _, _, _)
+                  | (movetype == Push) && (isNotPresentTuple push trctuple) = (trctuple : push, shift, pop)
+                  | (movetype == Shift || movetype == Summary) && (isNotPresentTuple shift trctuple) = (push, trctuple : shift, pop)
+                  | (movetype == Pop) && (isNotPresentTuple pop trctuple) = (push, shift, trctuple : pop)
+                  | otherwise = tpl
+
+-- check if a tuple is in the corresponding traceChunk
+isPresentTuple :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
+isPresentTuple trchunk trctuple = trctuple `elem` trchunk
+
+isNotPresentTuple :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
+isNotPresentTuple trchunk trctuple = not (isPresentTuple trchunk trctuple)
+ 
 -- an empty TraceMap, an array of 3-tuple of empty lists
 empty :: ST.ST s (STRef s (TraceMap s state))
 empty = do
   tm <- MV.replicate 4 ([],[],[])
   newSTRef tm
                                    
--- insert a Summary trace chunk before a push in the previous chain
-{-insertSummary :: STRef s (TraceMap s state) -> StateId state -> Stack state -> ST.ST s ()
-insertSummary tmref q g = do
-  if isNothing g
-    then return ()
-    else
-      let idx = getId (snd . fromJust $ g)
-      in do
-        trace <- lookup tmref idx
-        if not (null trace)                     --potrebbe essere un controllo inutile perchè se g è nello stack almeno una push l'ha subito e quindi di sicuro è partita la catena
-          then insert tmref idx (Summary, q, g)
-          else return () 
-               
 -- extract trace from TraceMap
-lookup :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceId state)
+lookup :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceChunk state, TraceChunk state, TraceChunk state)
 lookup tmref idx = do
   tm <- readSTRef tmref
   if idx < MV.length tm
     then MV.unsafeRead tm idx
-    else return []
+    else return ([],[],[])
+    
+readTraceChunk :: (TraceChunk state, TraceChunk state, TraceChunk state) -> TraceType -> TraceChunk state
+readTraceChunk (push, _, _) Push = push
+readTraceChunk (_, shift, _) Shift = shift
+readTraceChunk (_, _, pop) Pop = pop
 
+-- complete the trace given substituting recursively the summaries with the saved trace chunks
+unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
+unrollTrace tmref trace = 
+  let foldTrace acc sum@(Summary, q, _) = do
+        (push, shift, pop) <- lookup tmref (getId q)
+        let (_, fwdstPop, _) = head acc
+            poptrc = completePop pop fwdstPop
+            (_, fwdstShift, _) = head poptrc
+            --shifttrc = searchTuple shift fwdstShift
+            --(_, fwdstShift2, _) = head shifttrc
+            --shifttrc2 = searchTuple shift fwdstShift2
+            shifttrc = completeShift shift fwdstShift
+            --(_, fwdstPush, _) = head shifttrc
+            --(_, fwdstPush, _, _) = head shift
+            --pushtrc = completePush push fwdstPush
+        --return (pushtrc ++ shifttrc ++ poptrc ++ acc)
+        --return ((fmap (\(mt, q, g, p) -> (mt, q, g)) (filterShift shift)) ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+        --return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+        --return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+        return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+      foldTrace acc (moveType, q, g) = do
+        return ((moveType, q, g) : acc)
+  in do
+    foldM foldTrace [] trace
+    
+filterShift shift = foldr (\(mt, q, g, p) acc -> if mt == Summary then acc else (mt, q, g, p):acc) [] shift
+    
+-- search a tuple inside a TraceChunk that has the corresponding future state    
+searchTuple :: TraceChunk state -> StateId state -> TraceId state
+searchTuple [] _ = []
+searchTuple ((movetype, q, g, p):rest) fwdst =
+          if p == fwdst then [(movetype, q, g)] else searchTuple rest fwdst
+          
+completePush :: TraceChunk state -> StateId state -> TraceId state
+completePush trchunk fwdst = searchTuple trchunk fwdst
+
+completeShift :: TraceChunk state -> StateId state -> TraceId state
+completeShift tc fs = completeShiftPartial tc fs []
+  where completeShiftPartial trchunk fwdst precres =
+          let tuple = searchTuple trchunk fwdst
+              partres = tuple ++ precres
+          in if partres == precres
+               then partres
+               else 
+                 let (_, q, _) = head tuple
+                 in completeShiftPartial trchunk q partres
+
+completePop :: TraceChunk state -> StateId state -> TraceId state
+completePop trchunk fwdst = searchTuple trchunk fwdst
+    
+{-
 modifyAll :: (Ord state) => STRef s (TraceMap s state) 
                          -> ((TraceType, StateId state, Stack state) -> (TraceType, StateId state, Stack state)) 
                          -> ST.ST s ()
 modifyAll tmref f = do
   tm <- readSTRef tmref
   mapM_ (MV.unsafeModify tm $ map f) [0..((MV.length tm) -1)]
-
--- an empty TraceMap, an array of empty lists
-empty :: ST.ST s (STRef s (TraceMap s state))
-empty = do
-  tm <- MV.replicate 4 ([],[],[])
-  newSTRef tm
   
 --DBG-----------------------------  
 emptyDBG :: ST.ST s (STRef s (TraceMap s state))
@@ -193,22 +236,4 @@ takeStat :: TraceId state -> TraceId state -> StateId state -> ST.ST s (TraceId 
 takeStat acc str stat = let r@(mt, q, g) = head str
                         in do
                           return (r : acc)
-
--- complete the trace given substituting recursively the summaries with the saved trace chunks
-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
-unrollTrace tmref trace = 
-  let foldTrace acc sum@(Summary, q, _) = do
-        ts <- lookup tmref (getId q)
-        --tc <- unrollTrace tmref ts
-        return ((reverse ts) ++ acc)
-        --lst <- exploreTraceMap tmref
-        --lst <- takeChunkTraceMap tmref q sum
-        --return (lst ++ acc)
-        --tm <- readSTRef tmref
-        --tl <- MV.unsafeRead tm 1 
-        --return (((sum : tl) ++ [sum]) ++ acc)
-      foldTrace acc (moveType, q, g) = do
-        return ((moveType, q, g) : acc)
-        --return acc 
-  in do
-    foldM foldTrace [] trace-}                   
+-}

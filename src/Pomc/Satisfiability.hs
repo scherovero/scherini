@@ -153,25 +153,24 @@ reachPush isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
       doPush res@(True, _) _ = return res
       doPush (False, _) p = do
-        --TR.insert (traceSumm globals) (getId q) trcChunk             SALVO ANCHE p
+        TR.insert (traceSumm globals) (getId q) (Push, q, g, p)
         SM.insert (suppStarts globals) (getId q) g
         reach isDestState isDestStack globals delta p (Just (qProps, q)) ((Push, q, g) : trace)
   in do
-    --TR.insert (traceSumm globals) 60 (Push, q, g)
     newStates <- wrapStates (sIdGen globals) $ (deltaPush delta) qState qProps
     res@(pushReached, _) <- V.foldM' doPush (False, []) newStates
-    --TR.insert (traceSumm globals) (getId q) (Push, q, g)
     if pushReached
       then return res
       else do
         currentSuppEnds <- SM.lookup (suppEnds globals) (getId q)
         foldM (\acc s -> if fst acc
                             then return acc
-                            else reach isDestState isDestStack globals delta s g ((Summary, q, g) : trace))
+                            else do
+                              TR.insert (traceSumm globals) (getId q) (Summary, q, g, s)
+                              reach isDestState isDestStack globals delta s g ((Summary, q, g) : trace))
           (False, [])
           currentSuppEnds
-        --TR.insert (traceSumm globals) (getId q) (Summary, q, g)       SALVO ANCHE s
-        
+                  
 reachShift :: (NFData state, SatState state, Eq state, Hashable state, Show state)
            => (StateId state -> Bool)
            -> (Stack state -> Bool)
@@ -184,19 +183,13 @@ reachShift :: (NFData state, SatState state, Eq state, Hashable state, Show stat
            -> ST s (Bool, TraceId state)
 reachShift isDestState isDestStack globals delta q g qState trace =
   let qProps = getStateProps (bitenc delta) qState
-      trcChunk = (Shift, q, g)
       doShift res@(True, _) _ = return res
       doShift (False, _) p = do
-        --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) trcChunk            SALVO ANCHE p
-        reach isDestState isDestStack globals delta p (Just (qProps, (snd . fromJust $ g))) (trcChunk : trace)
+        TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) (Shift, q, g, p)
+        reach isDestState isDestStack globals delta p (Just (qProps, (snd . fromJust $ g))) ((Shift, q, g) : trace)
   in do
     newStates <- wrapStates (sIdGen globals) $ (deltaShift delta) qState qProps
-    res@(pushReached, _) <- V.foldM' doShift (False, []) newStates
-    if pushReached
-      then do
-        --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) trcChunk
-        return res
-      else return res
+    V.foldM' doShift (False, []) newStates
 
 reachPop :: (NFData state, SatState state, Eq state, Hashable state, Show state)
          => (StateId state -> Bool)
@@ -209,15 +202,16 @@ reachPop :: (NFData state, SatState state, Eq state, Hashable state, Show state)
          -> TraceId state
          -> ST s (Bool, TraceId state)
 reachPop isDestState isDestStack globals delta q g qState trace =
-  let trcChunk = (Pop, q, g)
-      doPop res@(True, _) _ = return res
+  let doPop res@(True, _) _ = return res
       doPop (False, _) p =
         let r = snd . fromJust $ g
             closeSupports res@(True, _) _ = return res
             closeSupports (False, _) g'
               | isNothing g' ||
                 ((prec delta) (fst . fromJust $ g') (current . getSatState . getState $ r)) == Just Yield
-              = reach isDestState isDestStack globals delta p g' (trcChunk : trace)
+              = do
+                  TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) (Pop, q, g, p)
+                  reach isDestState isDestStack globals delta p g' ((Pop, q, g) : trace)
               | otherwise = return (False, [])
         in do
           SM.insert (suppEnds globals) (getId r) p
@@ -228,7 +222,6 @@ reachPop isDestState isDestStack globals delta q g qState trace =
     newStates <- wrapStates (sIdGen globals) $
                  (deltaPop delta) qState (getState . snd . fromJust $ g)
     V.foldM' doPop (False, []) newStates
-    --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) trcChunk
         
 -- check the emptiness of the Language expressed by an automaton
 isEmpty :: (NFData state, SatState state, Eq state, Hashable state, Show state)
