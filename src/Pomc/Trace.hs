@@ -145,6 +145,7 @@ lookup tmref idx = do
 readTraceChunk :: (TraceChunk state, TraceChunk state, TraceChunk state) -> TraceType -> TraceChunk state
 readTraceChunk (push, _, _) Push = push
 readTraceChunk (_, shift, _) Shift = shift
+readTraceChunk (_, shift, _) Summary = shift
 readTraceChunk (_, _, pop) Pop = pop
 
 -- complete the trace given substituting recursively the summaries with the saved trace chunks
@@ -155,24 +156,26 @@ unrollTrace tmref trace =
         let (_, fwdstPop, _) = head acc
             poptrc = completePop pop fwdstPop
             (_, fwdstShift, _) = head poptrc
-            --shifttrc = searchTuple shift fwdstShift
+            shifttrc = completeShift shift fwdstShift
             --(_, fwdstShift2, _) = head shifttrc
             --shifttrc2 = searchTuple shift fwdstShift2
-            shifttrc = completeShift shift fwdstShift
+            --shifttrc = completeShift shift fwdstShift
             --(_, fwdstPush, _) = head shifttrc
             --(_, fwdstPush, _, _) = head shift
-            --pushtrc = completePush push fwdstPush
+            pushtrc = completePush2 push shifttrc fwdstPop
         --return (pushtrc ++ shifttrc ++ poptrc ++ acc)
         --return ((fmap (\(mt, q, g, p) -> (mt, q, g)) (filterShift shift)) ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
         --return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
-        --return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
-        return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+        return (pushtrc ++ shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+        --return ((fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
       foldTrace acc (moveType, q, g) = do
         return ((moveType, q, g) : acc)
   in do
     foldM foldTrace [] trace
     
 filterShift shift = foldr (\(mt, q, g, p) acc -> if mt == Summary then acc else (mt, q, g, p):acc) [] shift
+
+
     
 -- search a tuple inside a TraceChunk that has the corresponding future state    
 searchTuple :: TraceChunk state -> StateId state -> TraceId state
@@ -180,8 +183,18 @@ searchTuple [] _ = []
 searchTuple ((movetype, q, g, p):rest) fwdst =
           if p == fwdst then [(movetype, q, g)] else searchTuple rest fwdst
           
+searchTuple2 :: TraceChunk state -> StateId state -> TraceId state
+searchTuple2 trchunk fwdst = foldr (\(movetype, q, g, p) acc -> if p == fwdst then ((movetype, q, g):acc) else acc) [] trchunk
+          
 completePush :: TraceChunk state -> StateId state -> TraceId state
 completePush trchunk fwdst = searchTuple trchunk fwdst
+
+completePush2 :: TraceChunk state -> TraceId state -> StateId state -> TraceId state
+completePush2 trchunk shifttrc fwdst = if null shifttrc
+                                        then searchTuple trchunk fwdst
+                                        else let (_, fwdstPush, _) = head shifttrc
+                                             in searchTuple trchunk fwdstPush
+
 
 completeShift :: TraceChunk state -> StateId state -> TraceId state
 completeShift tc fs = completeShiftPartial tc fs []
