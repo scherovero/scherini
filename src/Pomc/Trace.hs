@@ -154,30 +154,17 @@ readTraceChunk (_, _, pop) Pop = pop
 unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
 unrollTrace tmref trace = 
   let foldTrace acc sum@(Summary, q, _) = do
-        --trcshift <- findAllShift tmref
         (push, shift, pop) <- lookup tmref (getId q)
+        trcpop <- findAllPop tmref
+        trcpush <- findAllPush tmref
         let (_, fwdstPop, _) = head acc
-            serie = matchChunks shift pop
-           -- poptrc = searchTuple2 pop fwdstPop
-           --  cos1 = head poptrc
-           -- cos2 = head (tail poptrc)
-            --(_, fwdstShift, _) = head poptrc
-            --shifttrc = completeShift shift fwdstShift
-            --(_, fwdstShift2, _) = head shifttrc
-            --shifttrc2 = searchTuple shift fwdstShift2
-            --shifttrc = completeShift shift fwdstShift
-            --(_, fwdstPush, _) = head poptrc
-            --(_, fwdstPush, _, _) = head shift
-            --pushtrc = completePush push fwdstPush
-            --matchCh = matchChunks push pop
-        --return (pushtrc ++ shifttrc ++ poptrc ++ acc)
-        --return ((fmap (\(mt, q, g, p) -> (Shift, q, g)) pop) ++ acc)
-        --return (shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
-        --return (pushtrc ++ shifttrc ++ (fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
-        --return ((fmap (\(mt, q, g, p) -> (mt, q, g)) trcshift) ++ acc)
-        --return ((fmap (\(mt, q, g, p) -> (mt, q, g)) push) ++ (fmap (\(mt, q, g, p) -> (mt, q, g)) shift) ++ (fmap (\(mt, q, g, p) -> (Shift, q, g)) pop) ++ acc)
-        return ((fmap (\(mt, q, g, p) -> (mt, q, g)) serie) ++ acc)
-        --return ((fmap (\(mt, q, g) -> (Shift, q, g)) poptrc) ++ acc)
+            tretuple = fmap (\(mt,a,b) -> (mt,a,b,a)) (searchTuple2 trcpop fwdstPop)
+            duetuple = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks trcpush tretuple) --così trova la combinazione giusta artificiosamente, ma le tuple giuste non sono salvate all'interno dello stato q indicato nel summary
+            pshtpl@(_,q1,g1) = head duetuple
+            poptpl@(_,q2,g2) = head (tail duetuple)
+        if q1 == q2
+          then return (sum : ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc))
+          else return ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc)
       foldTrace acc (moveType, q, g) = do
         return ((moveType, q, g) : acc)
   in do
@@ -186,7 +173,7 @@ unrollTrace tmref trace =
 filterShift shift = foldr (\(mt, q, g, p) acc -> if mt == Summary then acc else (mt, q, g, p):acc) [] shift
 
 matchChunks :: TraceChunk state -> TraceChunk state -> TraceChunk state
-matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) [] pop) [] push
+matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
   
 -- search a tuple inside a TraceChunk that has the corresponding future state    
 searchTuple :: TraceChunk state -> StateId state -> TraceId state
@@ -225,7 +212,17 @@ findAllShift :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
 findAllShift tmref = do
   tm <- readSTRef tmref
   MV.foldM (\acc (push, shift, pop) -> return (acc ++ (filterShift shift))) [] tm
+  
+findAllPop :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
+findAllPop tmref = do
+  tm <- readSTRef tmref
+  MV.foldM (\acc (push, shift, pop) -> return (acc ++ pop)) [] tm
 
+findAllPush :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
+findAllPush tmref = do
+  tm <- readSTRef tmref
+  MV.foldM (\acc (push, shift, pop) -> return (acc ++ push)) [] tm
+  
 {-
 modifyAll :: (Ord state) => STRef s (TraceMap s state) 
                          -> ((TraceType, StateId state, Stack state) -> (TraceType, StateId state, Stack state)) 
