@@ -141,7 +141,7 @@ lookup :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceChunk state, TraceC
 lookup tmref idx = do
   tm <- readSTRef tmref
   if idx < MV.length tm
-    then MV.unsafeRead tm idx
+    then MV.read tm idx
     else return ([],[],[])
     
 readTraceChunk :: (TraceChunk state, TraceChunk state, TraceChunk state) -> TraceType -> TraceChunk state
@@ -153,24 +153,71 @@ readTraceChunk (_, _, pop) Pop = pop
 -- complete the trace given substituting recursively the summaries with the saved trace chunks
 unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
 unrollTrace tmref trace = 
-  let foldTrace acc sum@(Summary, q, _) = do
+  let --(smt,sq,sg) = head $ findSummary trace
+      {-foldTrace acc sum@(Summary, q, _) = do             ---------questo blocco per trovare le giuste tuple da sostituire al summary
         (push, shift, pop) <- lookup tmref (getId q)
         trcpop <- findAllPop tmref
         trcpush <- findAllPush tmref
         let (_, fwdstPop, _) = head acc
             tretuple = fmap (\(mt,a,b) -> (mt,a,b,a)) (searchTuple2 trcpop fwdstPop)
-            duetuple = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks trcpush tretuple) --così trova la combinazione giusta artificiosamente, ma le tuple giuste non sono salvate all'interno dello stato q indicato nel summary
+            duetuple = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks trcpush tretuple) --così trova la combinazione giusta artificiosamente, ma le tuple giuste non sono salvate all'interno dello stato q indicato nel summary, lo stato del push non corrisponde neanche a quello salvato all'interno dello stack della pop
             pshtpl@(_,q1,g1) = head duetuple
             poptpl@(_,q2,g2) = head (tail duetuple)
         if q1 == q2
           then return (sum : ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc))
-          else return ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc)
+          else return ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc)-}
+      {-foldTrace acc sum@(Summary, q, g) = do
+        let tpl@(mt,a,b) = head acc in do
+            (pushprec,_,_) <- lookup tmref (getId a)
+            (push, shift, pop) <- lookup tmref (getId q)
+            trcpop <- findAllPop tmref
+            let call2 = tail (matchChunks pushprec push)
+                tuple = matchChunks call2 trcpop
+            return (((Summary,q,g):(fmap (\(mt,a,b,c) -> (mt,a,b)) (call2 ++ tuple))) ++ acc)-}
+      foldTrace acc sum@(Summary, q, g) = do                          ----- qua il codice curioso
+        trcpop <- findAllPop tmref
+        let (_, fwdst, _) = head acc
+            pop3@(mt3,q3,g3) = head (tail (searchTuple2 trcpop fwdst))
+        return (pop3:(sum:(pop3:(acc))))      
+        
       foldTrace acc (moveType, q, g) = do
         return ((moveType, q, g) : acc)
-  in do
+        {-if not (null acc)
+          then let tpl@(mt,a,b) = head acc in do
+               (pushprec,_,_) <- lookup tmref (getId a)
+               (push, shift, pop) <- lookup tmref (getId q)
+               return (((Summary,q,g):(fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks pushprec push))) ++ acc)
+          else return ((Summary,q,g):acc)-}
+        {-if not (null duetuple)
+          then let pshtpl@(_,q1,g1,p1) = head duetuple
+                   poptpl@(_,q2,g2,p2) = head (tail duetuple)
+               in do
+                 if q1 == (snd (fromJust g2))
+                   then return ((Summary,q,g):((fmap (\(mt,a,b,c) -> (mt,a,b)) duetuple) ++ acc))
+                   else return ((Summary,q,g):acc)
+          else return ((Summary,q,g):acc)-}
+        if not (null acc)
+          then let pop3@(mt,a,b) = head (tail acc) in do 
+               if q == a
+                 then return ((Summary,q,g):(pop3:acc)) --sembra che [(0,["call","pa"]),(1,["call"]),(2,["..."]) abbiano lo stesso stato q all'interno dato che poi li stampa come summary, in realtà fa sto scherzo solo in questo stralcio di codice, controllando con altri controlli hanno stati diversi
+                 else return ((mt,q,g):(pop3:acc))
+          else return ((moveType,q,g):((moveType,q,g):acc))
+        {-if not (null acc)                                -----con questo si verifica poi che non è vero quello che si evince sopra
+          then let (_, fwdst, _) = head acc in do
+               if q == fwdst
+                 then return ((Summary,q,g) : acc)
+                 else return ((moveType, q, g) : acc)
+          else return ((moveType, q, g) : acc)-}
+        {-if q == snd (fromJust sg)
+          then return ((moveType,q,g) : acc)
+          else return acc-}
+ in do
     foldM foldTrace [] trace
     
 filterShift shift = foldr (\(mt, q, g, p) acc -> if mt == Summary then acc else (mt, q, g, p):acc) [] shift
+
+findSummary :: TraceId state -> TraceId state
+findSummary trc = foldr (\(mt,q,g) acc -> if mt == Summary then [(mt,q,g)] else acc) [] trc
 
 matchChunks :: TraceChunk state -> TraceChunk state -> TraceChunk state
 matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
@@ -211,17 +258,17 @@ completePop trchunk fwdst = searchTuple trchunk fwdst
 findAllShift :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
 findAllShift tmref = do
   tm <- readSTRef tmref
-  MV.foldM (\acc (push, shift, pop) -> return (acc ++ (filterShift shift))) [] tm
+  MV.foldM (\acc (_, shift,_) -> return (acc ++ (filterShift shift))) [] tm
   
 findAllPop :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
 findAllPop tmref = do
   tm <- readSTRef tmref
-  MV.foldM (\acc (push, shift, pop) -> return (acc ++ pop)) [] tm
+  MV.foldM (\acc (_,_, pop) -> return (acc ++ pop)) [] tm
 
 findAllPush :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
 findAllPush tmref = do
   tm <- readSTRef tmref
-  MV.foldM (\acc (push, shift, pop) -> return (acc ++ push)) [] tm
+  MV.foldM (\acc (push,_,_) -> return (acc ++ push)) [] tm
   
 {-
 modifyAll :: (Ord state) => STRef s (TraceMap s state) 

@@ -249,7 +249,7 @@ isEmpty delta initials isFinal =
                          else reach (isFinal . getState) isNothing globals delta q Nothing [])
                      (False, [])
                      initialsId
-        rolledTr <- unrollTrace (traceSumm globals) unrTr   
+        rolledTr <- unrollTrace (traceSumm globals) unrTr
         return (res, rolledTr)
   in (not accepting, unIdTrace trace)
 
