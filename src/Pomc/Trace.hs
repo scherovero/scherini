@@ -181,7 +181,7 @@ unrollTrace tmref trace =
         return (pop3:(sum:(pop3:(acc))))      
         
       foldTrace acc (moveType, q, g) = do
-        return ((moveType, q, g) : acc)
+        --return ((moveType, q, g) : acc)
         {-if not (null acc)
           then let tpl@(mt,a,b) = head acc in do
                (pushprec,_,_) <- lookup tmref (getId a)
@@ -199,8 +199,8 @@ unrollTrace tmref trace =
         if not (null acc)
           then let pop3@(mt,a,b) = head (tail acc) in do 
                if q == a
-                 then return ((Summary,q,g):(pop3:acc)) --sembra che [(0,["call","pa"]),(1,["call"]),(2,["..."]) abbiano lo stesso stato q all'interno dato che poi li stampa come summary, in realtà fa sto scherzo solo in questo stralcio di codice, controllando con altri controlli hanno stati diversi
-                 else return ((mt,q,g):(pop3:acc))
+                 then return ((Summary,q,g):(pop3:acc)) --sembra che [(0,["call","pa"]),(1,["call"]),(2,["..."]) abbiano lo stesso stato q all'interno dato che poi li stampa come summary, in realtà fa sto scherzo solo in questo stralcio di codice, controllando con altri controlli hanno stati diversi. Infatti era sbagliato il codice, confermatissimo che non abbiano lo stesso stato.
+                 else return ((moveType,q,g):(pop3:acc))
           else return ((moveType,q,g):((moveType,q,g):acc))
         {-if not (null acc)                                -----con questo si verifica poi che non è vero quello che si evince sopra
           then let (_, fwdst, _) = head acc in do
