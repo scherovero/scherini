@@ -174,14 +174,29 @@ unrollTrace tmref trace =
             let call2 = tail (matchChunks pushprec push)
                 tuple = matchChunks call2 trcpop
             return (((Summary,q,g):(fmap (\(mt,a,b,c) -> (mt,a,b)) (call2 ++ tuple))) ++ acc)-}
-      foldTrace acc sum@(Summary, q, g) = do                          ----- qua il codice curioso
+      {-foldTrace acc sum@(Summary, q, g) = do                          ----- qua il codice curioso
         trcpop <- findAllPop tmref
         let (_, fwdst, _) = head acc
             pop3@(mt3,q3,g3) = head (tail (searchTuple2 trcpop fwdst))
-        return (pop3:(sum:(pop3:(acc))))      
-        
+        return (pop3:(sum:(pop3:(acc))))-}
+      {-foldTrace acc sum@(Summary, q, g) = do
+        trcpop <- findAllPop tmref
+        trcpush <- findAllPush tmref
+        let pop5@(mt5,q5,g5) = head (findPreSum trace [sum])
+            tretuple = fmap (\(mt,a,b) -> (mt,a,b,a)) (searchTuple2 trcpop q5)
+            duetuple = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks trcpush tretuple)
+            call2@(mt2,q2,g2) = head duetuple
+            pop3@(mt3,q3,g3) = head (tail duetuple)
+        if g == g5
+          then return ((Summary, q, g) : (duetuple ++ acc))
+          else return ((Shift, q, g) : (duetuple ++ acc))-}
+      foldTrace acc sum@(Summary, q, g) = do
+        trcpop <- findAllPop tmref
+        trcpush <- findAllPush tmref
+        let matches = fmap (\(mt,a,b,c) -> (mt,a,b)) (findCorrespondingPushPop trcpush trcpop)
+        return ((Summary, q, g) : (matches ++ acc))
       foldTrace acc (moveType, q, g) = do
-        --return ((moveType, q, g) : acc)
+        return ((moveType, q, g) : acc)
         {-if not (null acc)
           then let tpl@(mt,a,b) = head acc in do
                (pushprec,_,_) <- lookup tmref (getId a)
@@ -196,13 +211,7 @@ unrollTrace tmref trace =
                    then return ((Summary,q,g):((fmap (\(mt,a,b,c) -> (mt,a,b)) duetuple) ++ acc))
                    else return ((Summary,q,g):acc)
           else return ((Summary,q,g):acc)-}
-        if not (null acc)
-          then let pop3@(mt,a,b) = head (tail acc) in do 
-               if q == a
-                 then return ((Summary,q,g):(pop3:acc)) --sembra che [(0,["call","pa"]),(1,["call"]),(2,["..."]) abbiano lo stesso stato q all'interno dato che poi li stampa come summary, in realtà fa sto scherzo solo in questo stralcio di codice, controllando con altri controlli hanno stati diversi. Infatti era sbagliato il codice, confermatissimo che non abbiano lo stesso stato.
-                 else return ((moveType,q,g):(pop3:acc))
-          else return ((moveType,q,g):((moveType,q,g):acc))
-        {-if not (null acc)                                -----con questo si verifica poi che non è vero quello che si evince sopra
+        {-if not (null acc)
           then let (_, fwdst, _) = head acc in do
                if q == fwdst
                  then return ((Summary,q,g) : acc)
@@ -211,13 +220,30 @@ unrollTrace tmref trace =
         {-if q == snd (fromJust sg)
           then return ((moveType,q,g) : acc)
           else return acc-}
+        {-trcpop <- findAllPop tmref
+        trcpush <- findAllPush tmref
+        let pop5@(mt5,q5,g5) = head (findPreSum trace [(moveType, q, g)])
+            tretuple = fmap (\(mt,a,b) -> (mt,a,b,a)) (searchTuple2 trcpop q5)
+            duetuple = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks trcpush tretuple)
+            call2@(mt2,q2,g2) = head duetuple
+            pop3@(mt3,q3,g3) = head (tail duetuple)
+        if q == (snd (fromJust g5))
+          then return ((Summary, q, g) : (duetuple ++ acc))
+          else return ((moveType, q, g) : (duetuple ++ acc))-}
  in do
     foldM foldTrace [] trace
+    
+findPreSum :: TraceId state -> TraceId state -> TraceId state
+findPreSum ((mt,q,g):trcs) prec | mt == Summary = prec
+                                | otherwise = findPreSum trcs [(mt,q,g)]
     
 filterShift shift = foldr (\(mt, q, g, p) acc -> if mt == Summary then acc else (mt, q, g, p):acc) [] shift
 
 findSummary :: TraceId state -> TraceId state
 findSummary trc = foldr (\(mt,q,g) acc -> if mt == Summary then [(mt,q,g)] else acc) [] trc
+
+findCorrespondingPushPop :: TraceChunk state -> TraceChunk state -> TraceChunk state
+findCorrespondingPushPop push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if q == (snd (fromJust g2)) then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
 
 matchChunks :: TraceChunk state -> TraceChunk state -> TraceChunk state
 matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
