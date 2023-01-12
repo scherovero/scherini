@@ -43,8 +43,10 @@ import qualified Data.Vector.Mutable as MV
 --import Data.Set (Set)
 import qualified Data.Set as Set
 
+-- import qualified Debug.Trace as DBG
+
 -- Trace data type
-data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Show)
+data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Ord, Show)
 type TraceChunk state = [(TraceType, StateId state, Stack state, StateId state)]
 type TraceId state = [(TraceType, StateId state, Stack state)]
 type Trace state = [(TraceType, state, Maybe (Input, state))]
@@ -151,7 +153,7 @@ readTraceChunk (_, shift, _) Summary = shift
 readTraceChunk (_, _, pop) Pop = pop
 
 -- complete the trace given substituting recursively the summaries with the saved trace chunks
-unrollTrace :: STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
+unrollTrace :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
 unrollTrace tmref trace = 
   let --(smt,sq,sg) = head $ findSummary trace
       {-foldTrace acc sum@(Summary, q, _) = do             ---------questo blocco per trovare le giuste tuple da sostituire al summary
@@ -191,11 +193,19 @@ unrollTrace tmref trace =
           then return ((Summary, q, g) : (duetuple ++ acc))
           else return ((Shift, q, g) : (duetuple ++ acc))-}
       foldTrace acc sum@(Summary, q, g) = do
-        trcpop <- findAllPop tmref
-        trcpush <- findAllPush tmref
-        let matches = fmap (\(mt,a,b,c) -> (mt,a,b)) (findCorrespondingPushPop trcpush trcpop)
-        return ((Summary, q, g) : (matches ++ acc))
+        -- trcpop <- findAllPop tmref
+        -- trcpush <- findAllPush tmref
+        -- let matches = fmap (\(mt,a,b,c) -> (mt,a,b)) (findCorrespondingPushPop trcpush trcpop)
+        let chunkToTrace = fmap (\(mt,a,b,c) -> (mt,a,b))
+        tm <- readSTRef tmref
+        (pushes, shifts, pops) <- MV.read tm (getId q)
+        -- TODO: confrontare le pop con un look-ahead della transizione successiva per trovare quella giusta
+        --       andare a ritroso fino alla push
+        --       srotolare ricorsivamente i summary ottenuti
+        -- DBG.traceM $ show pops
+        return ((Summary, q, g) : (chunkToTrace pushes ++ chunkToTrace shifts ++ chunkToTrace pops ++ acc))
       foldTrace acc (moveType, q, g) = do
+        -- DBG.traceM ((show $ getState q) ++ "\n")
         return ((moveType, q, g) : acc)
         {-if not (null acc)
           then let tpl@(mt,a,b) = head acc in do
@@ -243,7 +253,7 @@ findSummary :: TraceId state -> TraceId state
 findSummary trc = foldr (\(mt,q,g) acc -> if mt == Summary then [(mt,q,g)] else acc) [] trc
 
 findCorrespondingPushPop :: TraceChunk state -> TraceChunk state -> TraceChunk state
-findCorrespondingPushPop push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if q == (snd (fromJust g2)) then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
+findCorrespondingPushPop push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if q == (snd (fromJust g2)) then ((mt, q, g, p) : (mt2, q2, g2, p2) : acc) else acc2) acc pop) [] push
 
 matchChunks :: TraceChunk state -> TraceChunk state -> TraceChunk state
 matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push

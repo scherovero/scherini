@@ -215,7 +215,7 @@ reachPop isDestState isDestStack globals delta q g qState trace =
               | otherwise = return (False, [])
         in do
           SM.insert (suppEnds globals) (getId r) p
-          --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) (Pop, q, g, p)
+          TR.insert (traceSumm globals) (getId r) (Pop, q, g, p)
           currentSuppStarts <- SM.lookup (suppStarts globals) (getId r)
           foldM closeSupports (False, []) currentSuppStarts
 
