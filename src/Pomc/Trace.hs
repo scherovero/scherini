@@ -166,15 +166,23 @@ unrollTrace tmref trace =
         if q1 == q2
           then return (sum : ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc))
           else return ((fmap (\(mt,q,g) -> (Shift,q,g)) duetuple) ++ acc)-}
+      foldTrace acc sum@(Summary, q, g) = do
+          trcpop <- findAllPop tmref
+          trcpush <- findAllPush tmref
+          let pop5@(mt5,q5,g5) = head (findPreSum trace [sum])
+              tretuple = fmap (\(mt,a,b) -> (mt,a,b,a)) (searchTuple2 trcpop q5)
+              duetuple = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks trcpush tretuple)
+              call2@(mt2,q2,g2) = head duetuple
+              pop3@(mt3,q3,g3) = head (tail duetuple) in do
+                (push2, shift2, pop2) <- lookup tmref (getId q2)
+                (push, shift, pop) <- lookup tmref (getId q)
+                let pushpop = fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks push2 pop2)
+                    pp22@(mt22,q22,g22) = head pushpop
+                    pp33@(mt33,q33,g33) = head (tail pushpop)    
+                if q22 == (snd (fromJust g33))
+                  then return (((Summary,q,g):(fmap (\(mt,a,b,c) -> (mt,a,b)) (matchChunks push2 pop2))) ++ acc) 
+                  else return ((Summary,q,g):acc)
       {-foldTrace acc sum@(Summary, q, g) = do
-        let tpl@(mt,a,b) = head acc in do
-            (pushprec,_,_) <- lookup tmref (getId a)
-            (push, shift, pop) <- lookup tmref (getId q)
-            trcpop <- findAllPop tmref
-            let call2 = tail (matchChunks pushprec push)
-                tuple = matchChunks call2 trcpop
-            return (((Summary,q,g):(fmap (\(mt,a,b,c) -> (mt,a,b)) (call2 ++ tuple))) ++ acc)-}
-      {-foldTrace acc sum@(Summary, q, g) = do                          ----- qua il codice curioso
         trcpop <- findAllPop tmref
         let (_, fwdst, _) = head acc
             pop3@(mt3,q3,g3) = head (tail (searchTuple2 trcpop fwdst))
@@ -190,11 +198,11 @@ unrollTrace tmref trace =
         if g == g5
           then return ((Summary, q, g) : (duetuple ++ acc))
           else return ((Shift, q, g) : (duetuple ++ acc))-}
-      foldTrace acc sum@(Summary, q, g) = do
+      {-foldTrace acc sum@(Summary, q, g) = do
         trcpop <- findAllPop tmref
         trcpush <- findAllPush tmref
         let matches = fmap (\(mt,a,b,c) -> (mt,a,b)) (findCorrespondingPushPop trcpush trcpop)
-        return ((Summary, q, g) : (matches ++ acc))
+        return ((Summary, q, g) : (matches ++ acc))-}
       foldTrace acc (moveType, q, g) = do
         return ((moveType, q, g) : acc)
         {-if not (null acc)
