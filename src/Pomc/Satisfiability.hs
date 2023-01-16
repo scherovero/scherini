@@ -68,12 +68,10 @@ data Delta state = Delta
 data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Show)
 type TraceId state = [(TraceType, StateId state, Stack state)]
 type Trace state = [(TraceType, state, Maybe (Input, state))]
-
 unIdTrace :: TraceId state -> Trace state
 unIdTrace trace =
   map (\(moveType, q, g) ->
          (moveType, getState q, fmap (\(b, r) -> (b, getState r)) g)) trace
-
 toInputTrace :: (SatState state) => BitEncoding -> Trace state -> [(state, PropSet)]
 toInputTrace be trace = foldr foldInput [] trace
   where foldInput (moveType, q, _) rest
@@ -86,7 +84,6 @@ toInputTrace be trace = foldr foldInput [] trace
           | otherwise = rest
         stateToInput q =
           (decodeInput be) . (extractInput be) . current . getSatState $ q
-
 showTrace :: (SatState state, Show state, Show a)
           => BitEncoding
           -> PropConv a
@@ -104,6 +101,9 @@ showTrace be pconv trace = concatMap showMove trace
           showState be pconv (getSatState r)
         showStack Nothing = "Bottom"
 -- End debugging stuff-}
+
+manageEmptyStack :: Stack state -> Int 
+manageEmptyStack g = if isNothing g then 0 else getId (snd . fromJust $ g)
 
 reach :: (NFData state, SatState state, Eq state, Hashable state, Show state)
       => (StateId state -> Bool) -- is the state as desired?
@@ -166,7 +166,7 @@ reachPush isDestState isDestStack globals delta q g qState trace =
         foldM (\acc s -> if fst acc
                             then return acc
                             else do
-                              TR.insert (traceSumm globals) (getId q) (Summary, q, g, s)
+                              TR.insert (traceSumm globals) (manageEmptyStack g) (Summary, q, g, s)
                               reach isDestState isDestStack globals delta s g ((Summary, q, g) : trace))
           (False, [])
           currentSuppEnds
@@ -215,7 +215,7 @@ reachPop isDestState isDestStack globals delta q g qState trace =
               | otherwise = return (False, [])
         in do
           SM.insert (suppEnds globals) (getId r) p
-          --TR.insert (traceSumm globals) (getId (snd . fromJust $ g)) (Pop, q, g, p)
+          TR.insert (traceSumm globals) (getId r) (Pop, q, g, p)
           currentSuppStarts <- SM.lookup (suppStarts globals) (getId r)
           foldM closeSupports (False, []) currentSuppStarts
 
