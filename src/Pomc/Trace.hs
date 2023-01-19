@@ -157,26 +157,36 @@ unrollTrace :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST
 unrollTrace tmref trace = 
   let foldTrace acc sum@(Summary, q, g) = do
         tm <- readSTRef tmref
+        --allpop <- findAllPop tmref
         (pushes, shifts, pops) <- MV.read tm (getId q)
-        let --chunkToTrace = fmap (\(mt,a,b,c) -> (mt,a,b))            
-            popTrc = searchTuple2 pops $ takeLookAheadState acc
-            shiftTrc = (completeShift shifts $ takeLookAheadState popTrc) ++ popTrc
-            pushTrc = (searchTuple2 pushes $ takeLookAheadState shiftTrc) ++ shiftTrc
+        let popTrc = fmap (\tpl -> [tpl]) (searchTuples pops $ takeLookAheadState acc)
+            --shiftTrc = completeShift
+            --shiftTrc = (searchChunk shifts $ takeLookAheadState2 popTrc) ++ popTrc
+            --pushTrc = (searchChunk pushes $ takeLookAheadState2 shiftTrc) ++ shiftTrc
+            --popTrc = searchTuple allpop $ takeLookAheadState acc
         -- TODO: confrontare le pop con un look-ahead della transizione successiva per trovare quella giusta
         --       andare a ritroso fino alla push
         --       srotolare ricorsivamente i summary ottenuti
-        --DBG.traceM $ show pushes
+        DBG.traceM $ (show popTrc ++ "\n\n\n\n\n\n\n\n\n\n\n\n")
         --DBG.traceM ((show $ (length popTrace == 1)) ++ "\n")
-        unrolled <- unrollTrace tmref (reverse pushTrc)
-        return (pushTrc ++ acc)
+        --unrolled <- unrollTrace tmref (reverse pushTrc)
+        --return (popTrc ++ acc)
+        return (acc)
       foldTrace acc (moveType, q, g) = do
-        -- DBG.traceM ((show $ getState q) ++ "\n")
+        --DBG.traceM ((show $ getState q) ++ "\n")
+        --DBG.traceM $ (show (moveType, q, g) ++ "\n")
         return ((moveType, q, g) : acc)
   in do
     foldM foldTrace [] trace
 
+chunkToTrace :: TraceChunk state -> TraceId state
+chunkToTrace tc = fmap (\(mt,a,b,c) -> (mt,a,b)) tc
+
 takeLookAheadState :: TraceId state -> StateId state
 takeLookAheadState trc = (\(_, fwdst, _) -> fwdst) $ head trc
+
+takeLookAheadState2 :: TraceChunk state -> StateId state
+takeLookAheadState2 trc = (\(_, fwdst, _, _) -> fwdst) $ head trc
     
 findPreSum :: TraceId state -> TraceId state -> TraceId state
 findPreSum ((mt,q,g):trcs) prec | mt == Summary = prec
@@ -193,37 +203,32 @@ findCorrespondingPushPop push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q
 matchChunks :: TraceChunk state -> TraceChunk state -> TraceChunk state
 matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
   
--- search a tuple inside a TraceChunk that has the corresponding future state    
-searchTuple :: TraceChunk state -> StateId state -> TraceId state
-searchTuple [] _ = []
-searchTuple ((movetype, q, g, p):rest) fwdst =
-          if p == fwdst then [(movetype, q, g)] else searchTuple rest fwdst
+-- search all the tuples inside a TraceChunk that has the corresponding future state    
           
-searchTuple2 :: TraceChunk state -> StateId state -> TraceId state
-searchTuple2 trchunk fwdst = foldr (\(movetype, q, g, p) acc -> if p == fwdst then ((movetype, q, g):acc) else acc) [] trchunk
+searchTuples :: TraceChunk state -> StateId state -> TraceChunk state
+searchTuples trchunk fwdst = foldr (\(movetype, q, g, p) acc -> if p == fwdst then ((movetype, q, g, p):acc) else acc) [] trchunk
           
-completePush :: TraceChunk state -> StateId state -> TraceId state
-completePush trchunk fwdst = searchTuple trchunk fwdst
+{-completePush :: TraceChunk state -> StateId state -> [TraceChunk state]
+completePush trchunk fwdst = searchTuples trchunk fwdst
 
 completePush2 :: TraceChunk state -> TraceId state -> StateId state -> TraceId state
 completePush2 trchunk shifttrc fwdst = if null shifttrc
                                         then searchTuple trchunk fwdst
                                         else let (_, fwdstPush, _) = head shifttrc
-                                             in searchTuple trchunk fwdstPush
+                                             in searchTuple trchunk fwdstPush-}
 
-completeShift :: TraceChunk state -> StateId state -> TraceId state
-completeShift tc fs = completeShiftPartial tc fs []
-  where completeShiftPartial trchunk fwdst precres =
-          let tuple = searchTuple trchunk fwdst
-              partres = tuple ++ precres
-          in if partres == precres
-               then partres
-               else 
-                 let (_, q, _) = head tuple
-                 in completeShiftPartial trchunk q partres
+completeShift :: TraceChunk state -> [TraceChunk state] -> [TraceChunk state]
+completeShift shifts tp = concatMap (completeShiftSinglePop shifts) tp
 
-completePop :: TraceChunk state -> StateId state -> TraceId state
-completePop trchunk fwdst = searchTuple trchunk fwdst
+completeShiftSinglePop :: TraceChunk state -> [TraceChunk state] -> [[TraceChunk state]]
+completeShiftSinglePop shifts tp = 
+                         let matchingTpls = searchTuples shifts $ takeLookAheadState (chunkToTrace tp) in
+                         if null matchingTpls
+                           then [tp]
+                           else completeShift shifts (fmap (\chunk -> chunk : tp) matchingTpls)
+
+{-completePop :: TraceChunk state -> StateId state -> TraceId state
+completePop trchunk fwdst = searchTuples trchunk fwdst-}
 
 findAllShift :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
 findAllShift tmref = do
