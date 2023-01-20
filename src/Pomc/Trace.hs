@@ -24,26 +24,19 @@ module Pomc.Trace ( TraceType(..)
                   ) where
 
 import Pomc.Prop (Prop(..))
-import Pomc.Prec (Prec(..), Alphabet)
-import Pomc.Potl (Formula(..))
-import Pomc.Check (EncPrecFunc, makeOpa)
-import Pomc.PropConv (APType, PropConv(..), convProps)
+import Pomc.PropConv (PropConv(..))
 import Pomc.State(Input, State(..), showState, showAtom)
 import Pomc.Encoding (PropSet, BitEncoding, extractInput, decodeInput)
 import Pomc.SatUtil
---import Pomc.SCCAlgorithm
---import Pomc.SetMap
 
 import Prelude hiding (lookup)
 import Control.Monad (foldM)
 import qualified Control.Monad.ST as ST
-import Data.Maybe
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Mutable as MV
---import Data.Set (Set)
 import qualified Data.Set as Set
 
-import qualified Debug.Trace as DBG
+--import qualified Debug.Trace as DBG
 
 -- Trace data type
 data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Ord, Show)
@@ -126,8 +119,6 @@ insertInTuple tpl@(push, shift, pop) trctuple@(movetype, _, _, _)
 -- check if a tuple is in the corresponding traceChunk
 isPresentTuple :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
 isPresentTuple trchunk trctuple = trctuple `elem` trchunk
-{-isPresentTuple :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
-isPresentTuple trchunk trctuple = False-}
 
 isNotPresentTuple :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
 isNotPresentTuple trchunk trctuple = not (isPresentTuple trchunk trctuple)
@@ -145,13 +136,29 @@ lookup tmref idx = do
   if idx < MV.length tm
     then MV.read tm idx
     else return ([],[],[])
-    
-readTraceChunk :: (TraceChunk state, TraceChunk state, TraceChunk state) -> TraceType -> TraceChunk state
-readTraceChunk (push, _, _) Push = push
-readTraceChunk (_, shift, _) Shift = shift
-readTraceChunk (_, shift, _) Summary = shift
-readTraceChunk (_, _, pop) Pop = pop
 
+
+
+-- PER IL PROF: praticamente mi sono accorto che ci possono essere loop infiniti nello srotolare alcune summary
+-- (per esempio nel 32 c'é [(3,Summary)] che contiene [(2,Summary)] e [(2,Summary)] contiene [(3,Summary]))
+-- e in più ogni Summary può essere sostituito con più combinazioni compatibili. L'unico modo per non farlo cadere in loop
+-- infiniti che mi è venuto in mente è quello di srotolare un passo alla volta tutte le possibili tracce che si creano combinando
+-- tutte le possibilità finchè non si trova una traccia conclusa senza più Summary, che dovrebbe essere quella giusta (o quantomeno
+-- il controesempio più breve)
+[(0,["call","pa"]),(1,["call"]),(2,["call"]),(2,["call"]),(2,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(2,["call"]),(2,["call"]),(3,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),(7,["exc"]),(8,["#"]),(8,["#"])]
+-- Quindi per esempio per quanto riguarda il 32 lo sviluppo è
+--     unrollTrace [ [...,(1,["call"]),(2,["..."]),(5,["exc"]),(6,["exc"]),...] ]
+--     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ]
+--     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] questa combinazione srotolata porta al loop
+--                   [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]] questaè quella giusta
+--     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]
+--                   [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ]
+--     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]
+--                 [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["call"]),(3,["call"]),(5,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ] ------> e questa seconda è quella giusta conclusa
+  
+
+-- take a list of traces and obtain another list with every trace unrolled by one-step
+-- then check if there is a closed trace without summaries, take it or unroll a step more
 unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceId state] -> ST.ST s (TraceId state)
 unrollTrace tmref traceList = do
                         newTraceList <- mapM (unrollSingleTrace tmref) traceList
@@ -164,7 +171,7 @@ unrollTrace tmref traceList = do
 -- complete the trace given substituting recursively the summaries with the saved trace chunks
 unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s ([TraceId state])
 unrollSingleTrace tmref trace = 
-  let foldTrace acc sum@(Summary, q, g) = do
+  let foldTrace acc (Summary, q, _) = do
         tm <- readSTRef tmref
         --allpop <- findAllPop tmref
         (pushes, shifts, pops) <- MV.read tm (getId q)
@@ -189,7 +196,7 @@ unrollSingleTrace tmref trace =
     foldM foldTrace [[]] trace
 
 chunkToTrace :: TraceChunk state -> TraceId state
-chunkToTrace tc = fmap (\(mt,a,b,c) -> (mt,a,b)) tc
+chunkToTrace tc = fmap (\(mt, q, g, _) -> (mt, q, g)) tc
 
 takeLookAheadState :: TraceId state -> StateId state
 takeLookAheadState trc = (\(_, fwdst, _) -> fwdst) $ head trc
@@ -199,14 +206,15 @@ takeLookAheadState2 trc = (\(_, fwdst, _, _) -> fwdst) $ head trc
 
 isThereSummary :: TraceId state -> Bool
 isThereSummary [] = False
-isThereSummary ((mt, q, g):tpls) | mt == Summary = True
+isThereSummary ((mt, _, _):tpls) | mt == Summary = True
                                  | otherwise = isThereSummary tpls
 
 takeClosedSummary :: [TraceId state] -> TraceId state
 takeClosedSummary [] = []
 takeClosedSummary (tc:tcs) | not (isThereSummary tc) = tc
                            | otherwise = takeClosedSummary tcs
-                           
+
+-- find all the possible substituting chunk traces for a Summary, and put them in a list
 findSingleCompletion :: (TraceChunk state, TraceChunk state, TraceChunk state)
                      -> TraceId state
                      -> [TraceId state]
@@ -216,21 +224,8 @@ findSingleCompletion (pushes, shifts, pops) acc =
                 shiftTrc = completeShift shifts popTrc
                 pushTrc = fmap (\chunk -> (searchTuples pushes $ takeLookAheadState (chunkToTrace chunk)) ++ chunk) shiftTrc
             in fmap (\chunk -> chunk ++ acc) (fmap chunkToTrace pushTrc)
-
-    
-filterShift shift = foldr (\(mt, q, g, p) acc -> if mt == Summary then acc else (mt, q, g, p):acc) [] shift
-
-findSummary :: TraceId state -> TraceId state
-findSummary trc = foldr (\(mt,q,g) acc -> if mt == Summary then [(mt,q,g)] else acc) [] trc
-
-findCorrespondingPushPop :: TraceChunk state -> TraceChunk state -> TraceChunk state
-findCorrespondingPushPop push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if q == (snd (fromJust g2)) then ((mt, q, g, p) : (mt2, q2, g2, p2) : acc) else acc2) acc pop) [] push
-
-matchChunks :: TraceChunk state -> TraceChunk state -> TraceChunk state
-matchChunks push pop = foldr (\(mt, q, g, p) acc -> foldr (\(mt2, q2, g2, p2) acc2 -> if p == q2 then ([(mt, q, g, p)] ++ [(mt2, q2, g2, p2)]) else acc2) acc pop) [] push
   
--- search all the tuples inside a TraceChunk that has the corresponding future state    
-          
+-- search all the tuples inside a TraceChunk that has the corresponding future state              
 searchTuples :: TraceChunk state -> StateId state -> TraceChunk state
 searchTuples trchunk fwdst = foldr (\(movetype, q, g, p) acc -> if p == fwdst then ((movetype, q, g, p):acc) else acc) [] trchunk
           
@@ -255,57 +250,3 @@ completeShiftSinglePop shifts tp =
 
 {-completePop :: TraceChunk state -> StateId state -> TraceId state
 completePop trchunk fwdst = searchTuples trchunk fwdst-}
-
-findAllShift :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
-findAllShift tmref = do
-  tm <- readSTRef tmref
-  MV.foldM (\acc (_, shift,_) -> return (acc ++ (filterShift shift))) [] tm
-  
-findAllPop :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
-findAllPop tmref = do
-  tm <- readSTRef tmref
-  MV.foldM (\acc (_,_, pop) -> return (acc ++ pop)) [] tm
-
-findAllPush :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
-findAllPush tmref = do
-  tm <- readSTRef tmref
-  MV.foldM (\acc (push,_,_) -> return (acc ++ push)) [] tm
-  
-{-
-modifyAll :: (Ord state) => STRef s (TraceMap s state) 
-                         -> ((TraceType, StateId state, Stack state) -> (TraceType, StateId state, Stack state)) 
-                         -> ST.ST s ()
-modifyAll tmref f = do
-  tm <- readSTRef tmref
-  mapM_ (MV.unsafeModify tm $ map f) [0..((MV.length tm) -1)]
-  
---DBG-----------------------------  
-emptyDBG :: ST.ST s (STRef s (TraceMap s state))
-emptyDBG = do
-  tm <- MV.replicate 30 []
-  newSTRef tm
-  
-insertDBG :: STRef s (TraceMap s state) -> Int -> (TraceType, StateId state, Stack state) -> ST.ST s ()
-insertDBG tmref idx trchunk = do
-  tm <- readSTRef tmref
-  tl <- MV.unsafeRead tm idx
-  MV.unsafeWrite tm idx (trchunk : tl)
-  
-lookupDBG :: STRef s (TraceMap s state) -> Int -> ST.ST s (TraceId state)
-lookupDBG tmref idx = do
-  tm <- readSTRef tmref
-  MV.unsafeRead tm idx
-exploreTraceMap :: STRef s (TraceMap s state) -> ST.ST s (TraceId state)
-exploreTraceMap tmref = do
-  tm <- readSTRef tmref
-  MV.foldM (\acc str -> return (acc ++ str)) [] tm
-  
-takeChunkTraceMap :: STRef s (TraceMap s state) -> StateId state -> (TraceType, StateId state, Stack state) -> ST.ST s (TraceId state)  
-takeChunkTraceMap tmref stat sum = do
-  tm <- readSTRef tmref
-  MV.foldM (\acc str -> if null str then return (sum : acc) else takeStat acc str stat) [] tm
-takeStat :: TraceId state -> TraceId state -> StateId state -> ST.ST s (TraceId state)  
-takeStat acc str stat = let r@(mt, q, g) = head str
-                        in do
-                          return (r : acc)
--}
