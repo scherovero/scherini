@@ -145,7 +145,7 @@ lookup tmref idx = do
 -- infiniti che mi è venuto in mente è quello di srotolare un passo alla volta tutte le possibili tracce che si creano combinando
 -- tutte le possibilità finchè non si trova una traccia conclusa senza più Summary, che dovrebbe essere quella giusta (o quantomeno
 -- il controesempio più breve)
-[(0,["call","pa"]),(1,["call"]),(2,["call"]),(2,["call"]),(2,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(3,["call"]),(2,["call"]),(2,["call"]),(3,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),(7,["exc"]),(8,["#"]),(8,["#"])]
+
 -- Quindi per esempio per quanto riguarda il 32 lo sviluppo è
 --     unrollTrace [ [...,(1,["call"]),(2,["..."]),(5,["exc"]),(6,["exc"]),...] ]
 --     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ]
@@ -168,7 +168,7 @@ unrollTrace tmref traceList = do
                          then return (realTrace)
                          else unrollTrace tmref (fmap reverse concNewTraceList)
 
--- complete the trace given substituting recursively the summaries with the saved trace chunks
+-- take a single TraceId and unroll by one step the Summary, returning a list of all the possible TraceIds
 unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s ([TraceId state])
 unrollSingleTrace tmref trace = 
   let foldTrace acc (Summary, q, _) = do
@@ -238,9 +238,13 @@ completePush2 trchunk shifttrc fwdst = if null shifttrc
                                         else let (_, fwdstPush, _) = head shifttrc
                                              in searchTuple trchunk fwdstPush-}
 
+
 completeShift :: TraceChunk state -> [TraceChunk state] -> [TraceChunk state]
 completeShift shifts trcpopList = concatMap (completeShiftSinglePop shifts) trcpopList
 
+-- take a single list of chunks and check if it can be completed, if not return it, otherwise for each compatible chunk found
+-- create a new list chunk_found:(input_list), then call recursively completeShift on the list of the new list of chunks
+-- completeShift [ chunk_found1:(input_list), chunk_found2:(input_list), chunk_found3:(input_list), ... ] 
 completeShiftSinglePop :: TraceChunk state -> TraceChunk state -> [TraceChunk state]
 completeShiftSinglePop shifts tp = 
                          let matchingTpls = searchTuples shifts $ takeLookAheadState (chunkToTrace tp) in
