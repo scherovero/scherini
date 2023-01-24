@@ -10,8 +10,8 @@ module Pomc.Satisfiability ( Delta(..)
                            , isEmptyOmega
                            , isSatisfiable
                            , isSatisfiableGen
-                           , toInputTrace
-                           , showTrace
+                           --, toInputTrace
+                           --, showTrace
                            ) where
 
 import Pomc.Prop (Prop(..))
@@ -63,44 +63,6 @@ data Delta state = Delta
   , deltaShift :: state -> Input -> [state] -- deltaShift relation
   , deltaPop :: state -> state -> [state] -- deltapop relation
   }
-
-{--- Begin debugging stuff
-data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Show)
-type TraceId state = [(TraceType, StateId state, Stack state)]
-type Trace state = [(TraceType, state, Maybe (Input, state))]
-unIdTrace :: TraceId state -> Trace state
-unIdTrace trace =
-  map (\(moveType, q, g) ->
-         (moveType, getState q, fmap (\(b, r) -> (b, getState r)) g)) trace
-toInputTrace :: (SatState state) => BitEncoding -> Trace state -> [(state, PropSet)]
-toInputTrace be trace = foldr foldInput [] trace
-  where foldInput (moveType, q, _) rest
-          | moveType == Push || moveType == Shift =
-            (q, stateToInput q) : rest
-          | moveType == Summary =
-            (q, Set.empty) : rest
-          | moveType == Found =
-            (q, Set.singleton End) : rest
-          | otherwise = rest
-        stateToInput q =
-          (decodeInput be) . (extractInput be) . current . getSatState $ q
-showTrace :: (SatState state, Show state, Show a)
-          => BitEncoding
-          -> PropConv a
-          -> Trace state
-          -> String
-showTrace be pconv trace = concatMap showMove trace
-  where showMove (moveType, q, g) =
-          show moveType     ++ ":\nRaw State:\n" ++
-          show q ++ "\nCheck State:\n" ++
-          showState be pconv (getSatState q) ++ "\nStack:\n" ++
-          showStack g ++ "\n\n"
-        showStack (Just (b, r)) =
-          showAtom be pconv b ++ "\n" ++
-          show r ++ "\n" ++
-          showState be pconv (getSatState r)
-        showStack Nothing = "Bottom"
--- End debugging stuff-}
 
 manageEmptyStack :: Stack state -> Int 
 manageEmptyStack g = if isNothing g then 0 else getId (snd . fromJust $ g)
@@ -249,11 +211,11 @@ isEmpty delta initials isFinal =
                          else reach (isFinal . getState) isNothing globals delta q Nothing [])
                      (False, [])
                      initialsId
-        --rolledTr1 <- unrollTrace (traceSumm globals) [unrTr]
-        --rolledTr2 <- unrollTrace (traceSumm globals) (fmap reverse [rolledTr1])
-        rolledTr <- unrollTrace (traceSumm globals) [unrTr] --(fmap reverse [rolledTr2])
-        
-        return (res, rolledTr)
+        if res
+          then do
+            rolledTr <- unrollTrace (traceSumm globals) [unrTr]
+            return (res, rolledTr)
+          else return (res, [])
   in (not accepting, unIdTrace trace)
 
 -- The omega case does not print counterexamples at the moment
