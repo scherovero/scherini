@@ -13,12 +13,7 @@ module Pomc.Trace ( TraceType(..)
                   , toInputTrace
                   , showTrace
                   , insert
-                 -- , insertDBG
-                 -- , emptyDBG
-                 -- , lookupDBG
-                 -- , insertSummary
                   , lookup
-                 -- , modifyAll
                   , empty
                   , unrollTrace
                   ) where
@@ -171,11 +166,10 @@ unrollTrace tmref traceList = do
 -- take a single TraceId and unroll by one step the Summary, returning a list of all the possible TraceIds
 unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s ([TraceId state])
 unrollSingleTrace tmref trace = 
-  let foldTrace acc (Summary, q, _) = do
+  let foldTrace acc (Summary, q, g) = do
         tm <- readSTRef tmref
-        --allpop <- findAllPop tmref
         (pushes, shifts, pops) <- MV.read tm (getId q)
-        let allPossibleChunks = concatMap (findSingleCompletion (pushes, shifts, pops)) acc
+        let allPossibleChunks = concatMap (findSingleCompletion (pushes, shifts, pops) g) acc
             --shiftTrc = completeShift
             --shiftTrc = (searchChunk shifts $ takeLookAheadState2 popTrc) ++ popTrc
             --pushTrc = (searchChunk pushes $ takeLookAheadState2 shiftTrc) ++ shiftTrc
@@ -216,28 +210,22 @@ takeClosedSummary (tc:tcs) | not (isThereSummary tc) = tc
 
 -- find all the possible substituting chunk traces for a Summary, and put them in a list
 findSingleCompletion :: (TraceChunk state, TraceChunk state, TraceChunk state)
+                     -> Stack state
                      -> TraceId state
                      -> [TraceId state]
-findSingleCompletion (pushes, shifts, pops) acc = 
+findSingleCompletion (pushes, shifts, pops) g acc = 
             let popTrc = fmap (\tpl -> [tpl]) (searchTuples pops $ takeLookAheadState acc)
-                --shiftTrc = fmap chunkToTrace (completeShift shifts popTrc)
                 shiftTrc = completeShift shifts popTrc
-                pushTrc = fmap (\chunk -> (searchTuples pushes $ takeLookAheadState (chunkToTrace chunk)) ++ chunk) shiftTrc
+                pushTrc = fmap (\chunk -> (completePush pushes (takeLookAheadState (chunkToTrace chunk)) g) ++ chunk) shiftTrc
             in fmap (\chunk -> chunk ++ acc) (fmap chunkToTrace pushTrc)
   
 -- search all the tuples inside a TraceChunk that has the corresponding future state              
 searchTuples :: TraceChunk state -> StateId state -> TraceChunk state
 searchTuples trchunk fwdst = foldr (\(movetype, q, g, p) acc -> if p == fwdst then ((movetype, q, g, p):acc) else acc) [] trchunk
-          
-{-completePush :: TraceChunk state -> StateId state -> [TraceChunk state]
-completePush trchunk fwdst = searchTuples trchunk fwdst
 
-completePush2 :: TraceChunk state -> TraceId state -> StateId state -> TraceId state
-completePush2 trchunk shifttrc fwdst = if null shifttrc
-                                        then searchTuple trchunk fwdst
-                                        else let (_, fwdstPush, _) = head shifttrc
-                                             in searchTuple trchunk fwdstPush-}
-
+-- search the tuples with corresponding future state and take only the one that has same stack as Summary's
+completePush :: TraceChunk state -> StateId state -> Stack state -> TraceChunk state
+completePush trchunk fwdst stck = foldr (\(movetype, q, g, p) acc -> if g == stck then [(movetype, q, g, p)] else acc) [] (searchTuples trchunk fwdst)
 
 completeShift :: TraceChunk state -> [TraceChunk state] -> [TraceChunk state]
 completeShift shifts trcpopList = concatMap (completeShiftSinglePop shifts) trcpopList

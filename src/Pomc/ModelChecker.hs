@@ -32,7 +32,7 @@ import Pomc.MiniProc (Program, VarState, programToOpa)
 import Pomc.Satisfiability (toInputTrace, showTrace)
 import qualified Debug.Trace as DBG
 #else
-import Pomc.Satisfiability (toInputTrace)
+import Pomc.Trace (toInputTrace)
 #endif
 
 import Data.Set (Set)
