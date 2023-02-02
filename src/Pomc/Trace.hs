@@ -15,7 +15,7 @@ module Pomc.Trace ( TraceType(..)
                   , insert
                   , lookup
                   , empty
-                  , unrollTrace
+                  , unrollTraceFirst
                   ) where
 
 import Pomc.Prop (Prop(..))
@@ -30,8 +30,9 @@ import qualified Control.Monad.ST as ST
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Set as Set
+import Data.Maybe
 
---import qualified Debug.Trace as DBG
+import qualified Debug.Trace as DBG
 
 -- Trace data type
 data TraceType = Push | Shift | Pop | Summary | Found deriving (Eq, Ord, Show)
@@ -145,52 +146,86 @@ lookup tmref idx = do
 --     unrollTrace [ [...,(1,["call"]),(2,["..."]),(5,["exc"]),(6,["exc"]),...] ]
 --     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ]
 --     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] questa combinazione srotolata porta al loop
---                   [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]] questaè quella giusta
+--                   [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]] questa è quella giusta
 --     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]
 --                   [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["..."]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ]
 --     unrollTrace [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["call"]),(2,["..."]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...]
 --                 [ [...,(1,["call"]),(2,["call"]),(3,["call"]),(2,["call"]),(3,["call"]),(3,["call"]),(5,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(18,["exc"]),(5,["exc"]),(6,["exc"]),...] ] ------> e questa seconda è quella giusta conclusa
-  
+
+unrollTraceFirst :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
+unrollTraceFirst tmref unrTr = do
+                               --DBG.traceM ((show (checkTraceConsistency (traceToChunk (reverse unrTr)))) ++ "\n")
+                               unrollTrace tmref [(traceToChunk (reverse unrTr))]
 
 -- take a list of traces and obtain another list with every trace unrolled by one-step
 -- then check if there is a closed trace without summaries, take it or unroll a step more
-unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceId state] -> ST.ST s (TraceId state)
+unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceChunk state] -> ST.ST s (TraceId state)
 unrollTrace tmref traceList = do
                         newTraceList <- mapM (unrollSingleTrace tmref) traceList
-                        let concNewTraceList = concat newTraceList
+                        --DBG.traceM ((show traceList) ++ "\n")
+                        let concNewTraceList = filter checkTraceConsistency (fmap reverse $ concat newTraceList)
                             realTrace = takeClosedSummary concNewTraceList
                         if not (null realTrace)
-                         then return (realTrace)
-                         else unrollTrace tmref (fmap reverse concNewTraceList)
-
+                         then do
+                           --DBG.traceM ((show concNewTraceList) ++ "\n")
+                           return (chunkToTrace realTrace)
+                         else do
+                           --DBG.traceM ((show concNewTraceList) ++ "\n")
+                           unrollTrace tmref concNewTraceList
+                         
+{-unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceChunk state] -> ST.ST s (TraceId state)
+unrollTrace tmref traceList = do
+                        newTraceList <- mapM (unrollSingleTrace tmref) traceList
+                        --DBG.traceM ("aaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n\n\n\n")
+                        let concNewTraceList = filter checkTraceConsistency (fmap reverse $ concat newTraceList)
+                        --DBG.traceM ((show concNewTraceList) ++ "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+                        return (chunkToTrace (head concNewTraceList))-}
+                        
 -- take a single TraceId and unroll by one step the Summary, returning a list of all the possible TraceIds
-unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s ([TraceId state])
+unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceChunk state -> ST.ST s ([TraceChunk state])
 unrollSingleTrace tmref trace = 
-  let foldTrace acc (Summary, q, g) = do
+  let foldTrace acc (Summary, q, g, p) = do
         tm <- readSTRef tmref
         (pushes, shifts, pops) <- MV.read tm (getId q)
+        --DBG.traceM ((show $ findMatchChunk pushes2 pops3) ++ "\n")
         let allPossibleChunks = concatMap (findSingleCompletion (pushes, shifts, pops) g) acc
-            --shiftTrc = completeShift
-            --shiftTrc = (searchChunk shifts $ takeLookAheadState2 popTrc) ++ popTrc
-            --pushTrc = (searchChunk pushes $ takeLookAheadState2 shiftTrc) ++ shiftTrc
-            --popTrc = searchTuple allpop $ takeLookAheadState acc
-        -- TODO: confrontare le pop con un look-ahead della transizione successiva per trovare quella giusta
-        --       andare a ritroso fino alla push
-        --       srotolare ricorsivamente i summary ottenuti
-        --DBG.traceM ((show $ (length popTrace == 1)) ++ "\n")
-        --unrolled <- unrollTrace tmref (reverse pushTrc)
-        --return (popTrc ++ acc)
-        --return (concshift ++ acc)
+        --DBG.traceM ((show allPossibleChunks) ++ "\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+        --DBG.traceM ("aaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n\n\n\n")
         return (allPossibleChunks)
-      foldTrace acc (moveType, q, g) = do
+      foldTrace acc (moveType, q, g, p) = do
         --DBG.traceM ((show $ getState q) ++ "\n")
         --DBG.traceM $ (show (moveType, q, g) ++ "\n")
-        return (fmap (\chunk -> (moveType, q, g):chunk) acc)
+        --DBG.traceM ("aaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n\n\n\n")
+        return (fmap (\chunk -> (moveType, q, g, p):chunk) acc)
   in do
     foldM foldTrace [[]] trace
 
 chunkToTrace :: TraceChunk state -> TraceId state
 chunkToTrace tc = fmap (\(mt, q, g, _) -> (mt, q, g)) tc
+
+traceToChunk :: TraceId state -> TraceChunk state
+traceToChunk trc = traceToChunkSupp (tail trc) (head trc)
+
+traceToChunkSupp :: TraceId state -> (TraceType, StateId state, Stack state) -> TraceChunk state
+traceToChunkSupp [] (mt, q, g) = [(mt, q, g, q)]
+traceToChunkSupp (tpl@(mt, q, g):trc) (mtprev, qprev, gprev) = (mtprev, qprev, gprev, q):(traceToChunkSupp trc tpl)
+
+checkTraceConsistency :: TraceChunk state -> Bool
+checkTraceConsistency trc = checkTraceConsistencySupp (tail trc) (head trc)
+
+checkTraceConsistencySupp :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
+checkTraceConsistencySupp [] _ = True
+checkTraceConsistencySupp (cur@(mt, q, g, p):trc) (mtprev, qprev, gprev, pprev) 
+                                                              | not (pprev == q) = False
+                                                              | (mtprev == Push) && (not (qprev == snd (fromJust g))) = False
+                                                              | (mtprev == Shift || mtprev == Summary)
+                                                                && (not (gprev == Nothing)) 
+                                                                && (not (g == Nothing)) 
+                                                                && (not (snd (fromJust gprev) == snd (fromJust g))) = False
+                                                              | otherwise = checkTraceConsistencySupp trc cur
+                                                    
+takeLookAheadFwdState :: TraceChunk state -> StateId state
+takeLookAheadFwdState trc = (\(_, _, _, fwdst) -> fwdst) $ head trc
 
 takeLookAheadState :: TraceId state -> StateId state
 takeLookAheadState trc = (\(_, fwdst, _) -> fwdst) $ head trc
@@ -198,47 +233,73 @@ takeLookAheadState trc = (\(_, fwdst, _) -> fwdst) $ head trc
 takeLookAheadState2 :: TraceChunk state -> StateId state
 takeLookAheadState2 trc = (\(_, fwdst, _, _) -> fwdst) $ head trc
 
-isThereSummary :: TraceId state -> Bool
+isThereSummary :: TraceChunk state -> Bool
 isThereSummary [] = False
-isThereSummary ((mt, _, _):tpls) | mt == Summary = True
-                                 | otherwise = isThereSummary tpls
+isThereSummary ((mt, _, _, _):tpls) | mt == Summary = True
+                                    | otherwise = isThereSummary tpls
 
-takeClosedSummary :: [TraceId state] -> TraceId state
+takeClosedSummary :: [TraceChunk state] -> TraceChunk state
 takeClosedSummary [] = []
 takeClosedSummary (tc:tcs) | not (isThereSummary tc) = tc
                            | otherwise = takeClosedSummary tcs
 
 -- find all the possible substituting chunk traces for a Summary, and put them in a list
-findSingleCompletion :: (TraceChunk state, TraceChunk state, TraceChunk state)
+findSingleCompletion :: (Show state) => (TraceChunk state, TraceChunk state, TraceChunk state)
                      -> Stack state
-                     -> TraceId state
-                     -> [TraceId state]
+                     -> TraceChunk state
+                     -> [TraceChunk state]
 findSingleCompletion (pushes, shifts, pops) g acc = 
-            let popTrc = fmap (\tpl -> [tpl]) (searchTuples pops $ takeLookAheadState acc)
-                shiftTrc = completeShift shifts popTrc
-                pushTrc = fmap (\chunk -> (completePush pushes (takeLookAheadState (chunkToTrace chunk)) g) ++ chunk) shiftTrc
-            in fmap (\chunk -> chunk ++ acc) (fmap chunkToTrace pushTrc)
+            let pushTrc = fmap (\tpl -> [tpl]) pushes --(searchTuplesByStack pushes $ takeLookAheadState acc)
+                shiftTrc = completeShift shifts pushTrc
+                --pushTrc = fmap (\chunk -> (completePush pushes (takeLookAheadState (chunkToTrace chunk)) g) ++ chunk) shiftTrc
+                popTrc = completePop pops shiftTrc 
+            in do
+              DBG.traceM ((show (filter checkTraceConsistency (fmap reverse popTrc))) ++ "\n\n\n\n\n\n\n")
+              --DBG.traceM ((show shiftTrc) ++ "\n")
+              fmap (\chunk -> chunk ++ acc) popTrc
+              --fmap (\chunk -> chunk ++ acc) (fmap reverse $ (filter checkTraceConsistency (fmap reverse popTrc)))
   
 -- search all the tuples inside a TraceChunk that has the corresponding future state              
 searchTuples :: TraceChunk state -> StateId state -> TraceChunk state
 searchTuples trchunk fwdst = foldr (\(movetype, q, g, p) acc -> if p == fwdst then ((movetype, q, g, p):acc) else acc) [] trchunk
+
+searchTuplesByStack :: TraceChunk state -> StateId state -> TraceChunk state
+searchTuplesByStack trchunk prevst = foldr (\(movetype, q, g, p) acc -> if (snd (fromJust g)) == prevst then ((movetype, q, g, p):acc) else acc) [] trchunk
+
+searchTuplesByState :: TraceChunk state -> StateId state -> TraceChunk state
+searchTuplesByState trchunk st = foldr (\(movetype, q, g, p) acc -> if q == st then ((movetype, q, g, p):acc) else acc) [] trchunk
 
 -- search the tuples with corresponding future state and take only the one that has same stack as Summary's
 completePush :: TraceChunk state -> StateId state -> Stack state -> TraceChunk state
 completePush trchunk fwdst stck = foldr (\(movetype, q, g, p) acc -> if g == stck then [(movetype, q, g, p)] else acc) [] (searchTuples trchunk fwdst)
 
 completeShift :: TraceChunk state -> [TraceChunk state] -> [TraceChunk state]
-completeShift shifts trcpopList = concatMap (completeShiftSinglePop shifts) trcpopList
+completeShift shifts trcpushList = concatMap (completeShiftSinglePop shifts) trcpushList
 
 -- take a single list of chunks and check if it can be completed, if not return it, otherwise for each compatible chunk found
 -- create a new list chunk_found:(input_list), then call recursively completeShift on the list of the new list of chunks
 -- completeShift [ chunk_found1:(input_list), chunk_found2:(input_list), chunk_found3:(input_list), ... ] 
 completeShiftSinglePop :: TraceChunk state -> TraceChunk state -> [TraceChunk state]
 completeShiftSinglePop shifts tp = 
-                         let matchingTpls = searchTuples shifts $ takeLookAheadState (chunkToTrace tp) in
+                         let matchingTpls = searchTuplesByState shifts $ takeLookAheadFwdState tp in
                          if null matchingTpls
                            then [tp]
                            else completeShift shifts (fmap (\chunk -> chunk : tp) matchingTpls)
 
-{-completePop :: TraceChunk state -> StateId state -> TraceId state
-completePop trchunk fwdst = searchTuples trchunk fwdst-}
+completePop :: TraceChunk state -> [TraceChunk state] -> [TraceChunk state]
+completePop pops trcpopList = foldr (\chunk acc -> let matchingTpls = completeSinglePop pops chunk in
+                                      if not (null matchingTpls)
+                                        then ((fmap (\poptpl -> poptpl:chunk) matchingTpls) ++ acc)
+                                        else acc) [] trcpopList
+
+completeSinglePop :: TraceChunk state -> TraceChunk state -> TraceChunk state
+completeSinglePop pops chunk = searchTuplesByState pops (takeLookAheadFwdState chunk)
+
+-------- DEBUG ---------------
+findAllPop :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
+findAllPop tmref = do
+                 tm <- readSTRef tmref
+                 MV.foldM (\acc (pushes,shifts,pops) -> return (pops ++ acc)) [] tm
+                 
+findMatchChunk :: TraceChunk state -> TraceChunk state -> TraceChunk state
+findMatchChunk tr1 tr2 = foldr (\(mt1, q1, g1, p1) acc1 -> foldr (\(mt2, q2, g2, p2) acc2 -> if p1 == q2 then ([(mt1, q1, g1, p1)] ++ [(mt2, q2, g2, p2)] ++ acc2) else acc2) acc1 tr2) [] tr1

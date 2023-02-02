@@ -213,7 +213,10 @@ isEmpty delta initials isFinal =
                      initialsId
         if res
           then do
-            rolledTr <- unrollTrace (traceSumm globals) [unrTr]
+            --rolledTr3 <- unrollTraceFirst (traceSumm globals) unrTr
+            --rolledTr2 <- unrollTraceFirst (traceSumm globals) (reverse rolledTr3) --unrTr
+            --rolledTr1 <- unrollTraceFirst (traceSumm globals) (reverse rolledTr2) --unrTr
+            rolledTr <- unrollTraceFirst (traceSumm globals) unrTr --(reverse rolledTr1) --unrTr
             return (res, rolledTr)
           else return (res, [])
   in (not accepting, unIdTrace trace)
