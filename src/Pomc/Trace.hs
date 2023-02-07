@@ -134,6 +134,17 @@ lookup tmref idx = do
     else return ([],[],[])
 
 
+takeMoveTypeTuple :: (TraceType, StateId state, Stack state, StateId state) -> TraceType
+takeMoveTypeTuple (mt, q, g, p) = mt
+
+takeStateTuple :: (TraceType, StateId state, Stack state, StateId state) -> StateId state
+takeStateTuple (mt, q, g, p) = q
+
+takeStackTuple :: (TraceType, StateId state, Stack state, StateId state) -> Stack state
+takeStackTuple (mt, q, g, p) = g
+
+takeFwdStateTuple :: (TraceType, StateId state, Stack state, StateId state) -> StateId state
+takeFwdStateTuple (mt, q, g, p) = p
 
 -- PER IL PROF: praticamente mi sono accorto che ci possono essere loop infiniti nello srotolare alcune summary
 -- (per esempio nel 32 c'é [(3,Summary)] che contiene [(2,Summary)] e [(2,Summary)] contiene [(3,Summary]))
@@ -155,11 +166,13 @@ lookup tmref idx = do
 unrollTraceFirst :: (Show state) => STRef s (TraceMap s state) -> TraceId state -> ST.ST s (TraceId state)
 unrollTraceFirst tmref unrTr = do
                                --DBG.traceM ((show (checkTraceConsistency (traceToChunk (reverse unrTr)))) ++ "\n")
-                               unrollTrace tmref [(traceToChunk (reverse unrTr))]
+                               trchunk <- browseTraceInit tmref [] (traceToChunk (reverse unrTr))
+                               DBG.traceM ((show $ reverse trchunk) ++ "\n\n\n\n\n\n\n")
+                               return (reverse $ chunkToTrace trchunk)
 
 -- take a list of traces and obtain another list with every trace unrolled by one-step
 -- then check if there is a closed trace without summaries, take it or unroll a step more
-unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceChunk state] -> ST.ST s (TraceId state)
+{-unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceChunk state] -> ST.ST s (TraceId state)
 unrollTrace tmref traceList = do
                         newTraceList <- mapM (unrollSingleTrace tmref) traceList
                         --DBG.traceM ((show traceList) ++ "\n")
@@ -171,7 +184,7 @@ unrollTrace tmref traceList = do
                            return (chunkToTrace realTrace)
                          else do
                            --DBG.traceM ((show concNewTraceList) ++ "\n")
-                           unrollTrace tmref concNewTraceList
+                           unrollTrace tmref concNewTraceList-}
                          
 {-unrollTrace :: (Show state) => STRef s (TraceMap s state) -> [TraceChunk state] -> ST.ST s (TraceId state)
 unrollTrace tmref traceList = do
@@ -180,9 +193,65 @@ unrollTrace tmref traceList = do
                         let concNewTraceList = filter checkTraceConsistency (fmap reverse $ concat newTraceList)
                         --DBG.traceM ((show concNewTraceList) ++ "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
                         return (chunkToTrace (head concNewTraceList))-}
+
+browseTraceInit :: (Show state) => STRef s (TraceMap s state) -> TraceChunk state -> TraceChunk state -> ST.ST s (TraceChunk state)
+browseTraceInit tmref badTpl trc = let (left:(middle:rest)) = trc
+                      in browseTrace tmref left middle rest badTpl [left]
                         
+browseTrace :: (Show state) => STRef s (TraceMap s state) 
+            -> (TraceType, StateId state, Stack state, StateId state)
+            -> (TraceType, StateId state, Stack state, StateId state)
+            -> TraceChunk state
+            -> TraceChunk state
+            -> TraceChunk state
+            -> ST.ST s (TraceChunk state)
+browseTrace tmref left middle [] badTpl acc = return (middle:acc)
+browseTrace tmref left middle@(mtmiddle, qmiddle, gmiddle, pmiddle) (right:rest) badTpl acc
+                                   | mtmiddle == Summary = do
+                                                             solvedSum <- resolveSummary tmref left middle right badTpl
+                                                             if null solvedSum
+                                                               then return []
+                                                               else browseTrace tmref middle right rest badTpl (solvedSum ++ acc)
+                                   | otherwise = browseTrace tmref middle right rest badTpl (middle:acc)
+                                   
+resolveSummary :: (Show state) => STRef s (TraceMap s state)
+               -> (TraceType, StateId state, Stack state, StateId state)
+               -> (TraceType, StateId state, Stack state, StateId state)
+               -> (TraceType, StateId state, Stack state, StateId state)
+               -> TraceChunk state
+               -> ST.ST s (TraceChunk state)
+resolveSummary tmref left middle@(mt, q, g, p) right badTpl = do
+      if isSummaryVisited badTpl middle
+        then return []
+        else do
+               tm <- readSTRef tmref
+               (pushes, shifts, pops) <- MV.read tm (getId q)
+               let allPossibleSub = findCompletion (pushes, shifts, pops) left right
+                   consistentTrc = filter (addExtremeCheckConsistency left right) allPossibleSub
+               --DBG.traceM ((show $ fmap reverse consistentTrc) ++ "\n\n\n\n\n\n\n")
+               if null consistentTrc
+                 then return []
+                 else let realTrace = takeClosedSummary consistentTrc in
+                      if not (null realTrace)
+                        then return realTrace
+                        else do
+                               traceList <- mapM (browseTraceInit tmref (middle:badTpl)) (fmap reverse consistentTrc)
+                               --DBG.traceM ((show $ fmap reverse traceList) ++ "\n\n\n\n\n\n\n")
+                               return (takeShortestList $ filter (not . null) traceList)
+   
+      
+findCompletion :: (TraceChunk state, TraceChunk state, TraceChunk state)
+               -> (TraceType, StateId state, Stack state, StateId state)
+               -> (TraceType, StateId state, Stack state, StateId state)
+               -> [TraceChunk state]
+findCompletion (pushes, shifts, pops) left right = 
+            let pushTrc = fmap (\tpl -> [tpl]) pushes
+                shiftTrc = completeShift shifts pushTrc
+                popTrc = completePop pops right shiftTrc
+            in popTrc
+                          
 -- take a single TraceId and unroll by one step the Summary, returning a list of all the possible TraceIds
-unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceChunk state -> ST.ST s ([TraceChunk state])
+{-unrollSingleTrace :: (Show state) => STRef s (TraceMap s state) -> TraceChunk state -> ST.ST s ([TraceChunk state])
 unrollSingleTrace tmref trace = 
   let foldTrace acc (Summary, q, g, p) = do
         tm <- readSTRef tmref
@@ -198,7 +267,7 @@ unrollSingleTrace tmref trace =
         --DBG.traceM ("aaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n\n\n\n")
         return (fmap (\chunk -> (moveType, q, g, p):chunk) acc)
   in do
-    foldM foldTrace [[]] trace
+    foldM foldTrace [[]] trace-}
 
 chunkToTrace :: TraceChunk state -> TraceId state
 chunkToTrace tc = fmap (\(mt, q, g, _) -> (mt, q, g)) tc
@@ -210,6 +279,20 @@ traceToChunkSupp :: TraceId state -> (TraceType, StateId state, Stack state) -> 
 traceToChunkSupp [] (mt, q, g) = [(mt, q, g, q)]
 traceToChunkSupp (tpl@(mt, q, g):trc) (mtprev, qprev, gprev) = (mtprev, qprev, gprev, q):(traceToChunkSupp trc tpl)
 
+takeShortestList :: [TraceChunk state] -> TraceChunk state
+takeShortestList lol = if null lol then [] else takeShortestListSupp (tail lol) (head lol) 
+
+takeShortestListSupp :: [TraceChunk state] -> TraceChunk state -> TraceChunk state
+takeShortestListSupp [] shortest = shortest
+takeShortestListSupp (chunk:rest) shortest | length chunk < length shortest = takeShortestListSupp rest chunk
+                                           | otherwise = takeShortestListSupp rest shortest
+
+addExtremeCheckConsistency :: (TraceType, StateId state, Stack state, StateId state)
+                           -> (TraceType, StateId state, Stack state, StateId state)
+                           -> TraceChunk state
+                           -> Bool
+addExtremeCheckConsistency left right trc = checkTraceConsistency (left:(reverse (right:trc)))
+                           
 checkTraceConsistency :: TraceChunk state -> Bool
 checkTraceConsistency trc = checkTraceConsistencySupp (tail trc) (head trc)
 
@@ -242,9 +325,12 @@ takeClosedSummary :: [TraceChunk state] -> TraceChunk state
 takeClosedSummary [] = []
 takeClosedSummary (tc:tcs) | not (isThereSummary tc) = tc
                            | otherwise = takeClosedSummary tcs
+                           
+isSummaryVisited :: TraceChunk state -> (TraceType, StateId state, Stack state, StateId state) -> Bool
+isSummaryVisited badTpl middle = foldr (\btpl acc -> if (takeStateTuple btpl) == (takeStateTuple middle) then True else acc) False badTpl
 
 -- find all the possible substituting chunk traces for a Summary, and put them in a list
-findSingleCompletion :: (Show state) => (TraceChunk state, TraceChunk state, TraceChunk state)
+{-findSingleCompletion :: (Show state) => (TraceChunk state, TraceChunk state, TraceChunk state)
                      -> Stack state
                      -> TraceChunk state
                      -> [TraceChunk state]
@@ -257,7 +343,7 @@ findSingleCompletion (pushes, shifts, pops) g acc =
               DBG.traceM ((show (filter checkTraceConsistency (fmap reverse popTrc))) ++ "\n\n\n\n\n\n\n")
               --DBG.traceM ((show shiftTrc) ++ "\n")
               fmap (\chunk -> chunk ++ acc) popTrc
-              --fmap (\chunk -> chunk ++ acc) (fmap reverse $ (filter checkTraceConsistency (fmap reverse popTrc)))
+              --fmap (\chunk -> chunk ++ acc) (fmap reverse $ (filter checkTraceConsistency (fmap reverse popTrc)))-}
   
 -- search all the tuples inside a TraceChunk that has the corresponding future state              
 searchTuples :: TraceChunk state -> StateId state -> TraceChunk state
@@ -268,6 +354,9 @@ searchTuplesByStack trchunk prevst = foldr (\(movetype, q, g, p) acc -> if (snd 
 
 searchTuplesByState :: TraceChunk state -> StateId state -> TraceChunk state
 searchTuplesByState trchunk st = foldr (\(movetype, q, g, p) acc -> if q == st then ((movetype, q, g, p):acc) else acc) [] trchunk
+
+searchTuplesForPop :: TraceChunk state -> StateId state -> StateId state -> TraceChunk state
+searchTuplesForPop pops fwdStateLeft stateRight = foldr (\(movetype, q, g, p) acc -> if (fwdStateLeft == q) && (p == stateRight) then ((movetype, q, g, p):acc) else acc) [] pops
 
 -- search the tuples with corresponding future state and take only the one that has same stack as Summary's
 completePush :: TraceChunk state -> StateId state -> Stack state -> TraceChunk state
@@ -286,14 +375,20 @@ completeShiftSinglePop shifts tp =
                            then [tp]
                            else completeShift shifts (fmap (\chunk -> chunk : tp) matchingTpls)
 
-completePop :: TraceChunk state -> [TraceChunk state] -> [TraceChunk state]
-completePop pops trcpopList = foldr (\chunk acc -> let matchingTpls = completeSinglePop pops chunk in
+completePop :: TraceChunk state
+            -> (TraceType, StateId state, Stack state, StateId state)
+            -> [TraceChunk state]
+            -> [TraceChunk state]
+completePop pops right trcpopList = foldr (\chunk acc -> let matchingTpls = completeSinglePop pops (head chunk) right in
                                       if not (null matchingTpls)
                                         then ((fmap (\poptpl -> poptpl:chunk) matchingTpls) ++ acc)
                                         else acc) [] trcpopList
 
-completeSinglePop :: TraceChunk state -> TraceChunk state -> TraceChunk state
-completeSinglePop pops chunk = searchTuplesByState pops (takeLookAheadFwdState chunk)
+completeSinglePop :: TraceChunk state
+                  -> (TraceType, StateId state, Stack state, StateId state)
+                  -> (TraceType, StateId state, Stack state, StateId state)
+                  -> TraceChunk state
+completeSinglePop pops left right = searchTuplesForPop pops (takeFwdStateTuple left) (takeStateTuple right)
 
 -------- DEBUG ---------------
 findAllPop :: STRef s (TraceMap s state) -> ST.ST s (TraceChunk state)
