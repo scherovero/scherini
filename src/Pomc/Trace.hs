@@ -242,9 +242,8 @@ findCompletion tmref (pushes, shifts, pops) left right level = do
                 DBG.traceM ((show $ level+1) ++ "\n\n\n\n\n\n\n\n\n\n\n\n")
                 findCompletion tmref (pushes, shifts, pops) left right (level+1)
               else do
-                --DBG.traceM ((show $ fmap reverse allComb) ++ "\n\n\n\n\n\n\n\n\n\n\n\n")
+                DBG.traceM ((show $ fmap reverse allComb) ++ "\n\n\n\n\n\n\n\n\n\n\n\n")
                 return allComb
-            return allComb
 
 completePush :: (Show state) => STRef s (TraceMap s state) 
              -> Set (StateId state)
